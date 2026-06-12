@@ -844,7 +844,7 @@ pre {
 
 .chart-wrap,
 .dashboard-chart-wrap {
-  min-height: 360px;
+  min-height: 300px;
   background: white;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -854,7 +854,15 @@ pre {
 .chart-wrap canvas,
 .dashboard-chart-wrap canvas {
   width: 100%;
-  height: 320px;
+  height: 280px;
+}
+
+.dashboard-panel .dashboard-chart-wrap {
+  min-height: 100%;
+}
+
+.preview-chart-wrap {
+  min-height: 220px;
 }
 
 .optional-save-panel {
@@ -870,10 +878,54 @@ pre {
   padding: var(--space-5);
 }
 
+.dashboard-workspace {
+  display: grid;
+  grid-template-columns: minmax(340px, 400px) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.dashboard-builder-panel {
+  position: sticky;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+}
+
+.dashboard-canvas-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
 .dashboard-bar-grid {
   display: grid;
   grid-template-columns: 1.2fr 1fr 1fr 1.1fr;
   gap: var(--space-4);
+}
+
+.dashboard-builder-tag-list {
+  max-height: 320px;
+}
+
+.builder-selected-tags {
+  margin-top: var(--space-3);
+}
+
+.dashboard-builder-preview {
+  min-height: 240px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: var(--space-4);
+}
+
+.dashboard-builder-preview:not(.empty-state) {
+  background: white;
+  border-style: solid;
 }
 
 .dashboard-panel-grid {
@@ -913,6 +965,7 @@ pre {
   flex-direction: column;
   gap: var(--space-3);
   min-height: 0;
+  flex: 1;
 }
 
 .dashboard-panel-controls {
@@ -935,6 +988,24 @@ pre {
 .panel-scroll {
   overflow: auto;
   max-height: 260px;
+}
+
+.kpi-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.kpi-title {
+  color: var(--color-muted);
+  font-size: var(--font-md);
+}
+
+.kpi-value {
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--color-text);
 }
 
 .profile-grid {
@@ -985,6 +1056,12 @@ pre {
   border-color: #f3df9b;
 }
 
+.type-badge.kpi {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  border-color: #b8ebc8;
+}
+
 .badge.high {
   background: var(--color-success-soft);
   color: var(--color-success);
@@ -1028,6 +1105,15 @@ pre {
 
   .layout-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-builder-panel {
+    position: static;
+    max-height: none;
   }
 }
 

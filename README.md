@@ -186,6 +186,30 @@ Current limitations:
 - no authentication
 - no MySQL-backed dashboard storage
 
+## Dashboard Builder
+
+Use `Explore` for investigation and one-off analysis. Use `Dashboards` for saved reusable views.
+
+Dashboard builder workflow:
+
+1. Go to `Dashboards`.
+2. Choose a panel type.
+3. Select a machine.
+4. Select one or more tag(s).
+5. Pick chart type, time range, bucket size, and aggregation.
+6. Preview the panel.
+7. Add the panel to the dashboard.
+8. Resize, edit, duplicate, or refresh the panel.
+9. Save the dashboard.
+
+You can now build basic panels directly in `Dashboards`:
+
+- line trend panels
+- bar chart panels
+- KPI panels
+- tag profile panels
+- relationship results panels
+
 ## Phase 10 UI Foundation Cleanup
 
 Phase 10 does not add new analytics. It improves the frontend structure so the existing app is easier to visually test and debug.

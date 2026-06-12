@@ -1763,6 +1763,22 @@ function summarizePanelDataSource(panel) {
   return "";
 }
 
+function panelTypeLabel(panel) {
+  if (panel.type === "timeseries") {
+    return panel.settings?.chart_type === "bar" ? "bar chart" : "line trend";
+  }
+  if (panel.type === "kpi") {
+    return "kpi";
+  }
+  if (panel.type === "tag_profile") {
+    return "tag profile";
+  }
+  if (panel.type === "relationship_results") {
+    return "relationship";
+  }
+  return panel.type;
+}
+
 async function hydratePanelData(panel) {
   panel.data = panel.data || {};
   panel.data.error = null;
@@ -1841,7 +1857,7 @@ function renderPreviewPanel(panel) {
     <div class="dashboard-panel-head">
       <div class="dashboard-panel-title">
         <h3>${escapeHtml(panel.title)}</h3>
-        <span class="type-badge ${panel.type}">${panel.type}</span>
+        <span class="type-badge ${panel.type}">${escapeHtml(panelTypeLabel(panel))}</span>
       </div>
     </div>
     <div class="dashboard-meta">${escapeHtml(summarizePanelDataSource(panel))}</div>
@@ -2043,6 +2059,7 @@ async function loadDashboardById(dashboardId) {
     syncDashboardInputs();
     renderDashboardGrid();
     markDashboardDirty(false);
+    resetDashboardBuilderForm();
     setDashboardStatus(`Loaded dashboard ${payload.name}.`);
     updateWorkflowSteps();
   } catch (error) {
@@ -2141,7 +2158,7 @@ async function addBuilderPanelToDashboard() {
   }
 }
 
-function editPanelInBuilder(panelId) {
+async function editPanelInBuilder(panelId) {
   const panel = ensureCurrentDashboard().panels.find((item) => item.id === panelId);
   if (!panel) {
     return;
@@ -2166,7 +2183,7 @@ function editPanelInBuilder(panelId) {
     document.getElementById("builder-end-utc").value = panel.settings?.end_utc || "";
     document.getElementById("builder-bucket-seconds").value = panel.settings?.bucket_seconds || 60;
     document.getElementById("builder-aggregation").value = panel.settings?.aggregation || "avg";
-    state.builderSelectedTagIds = new Set([panel.settings?.tag_id]);
+    state.builderSelectedTagIds = new Set(panel.settings?.tag_id ? [panel.settings.tag_id] : []);
   } else if (panel.type === "relationship_results") {
     document.getElementById("builder-panel-type").value = "relationship_results";
     const request = panel.settings?.request || {};
@@ -2174,8 +2191,9 @@ function editPanelInBuilder(panelId) {
     document.getElementById("builder-start-utc").value = request.start_utc || "";
     document.getElementById("builder-end-utc").value = request.end_utc || "";
     document.getElementById("builder-bucket-seconds").value = request.bucket_seconds || 60;
-    state.builderSelectedTagIds = new Set([request?.target?.tag_id]);
+    state.builderSelectedTagIds = new Set(request?.target?.tag_id ? [request.target.tag_id] : []);
   }
+  await loadDashboardBuilderTags();
   renderDashboardBuilderTagList();
   renderDashboardBuilderSelectedTags();
   syncDashboardBuilderEditingState();
@@ -2222,6 +2240,7 @@ function addCurrentChartPanel() {
     type: "timeseries",
     title: `Trend: ${state.targetTag?.display_name || state.targetTag?.opc_path || "Series"}`,
     settings: {
+      chart_type: "line",
       aggregation: document.getElementById("chart-aggregation").value,
       chart_mode: document.getElementById("chart-mode").value,
       start_utc: state.lastTimeseriesRequest.start_utc,
@@ -2264,7 +2283,7 @@ async function addTargetProfilePanel() {
       end_utc: document.getElementById("end-utc").value.trim(),
     });
     const profile = await apiGet(
-      `/api/machines/${state.selectedMachineId}/tags/${state.targetTag.tag_id}/profile?${params.toString()}`
+      `/api/machines/${state.selectedMachineId}/tags/${state.targetTag.tag_id}/scored-profile?${params.toString()}`
     );
     addPanelToDashboard({
       type: "tag_profile",
@@ -2302,6 +2321,20 @@ function removeDashboardPanel(panelId) {
   setDashboardStatus("Panel removed. Save the dashboard to persist the change.");
   showToast("Panel removed.", "warning");
   updateWorkflowSteps();
+}
+
+function duplicatePanel(panelId) {
+  const panel = ensureCurrentDashboard().panels.find((item) => item.id === panelId);
+  if (!panel) {
+    return;
+  }
+  const clone = JSON.parse(JSON.stringify(panel));
+  clone.id = generatePanelId();
+  clone.title = `${panel.title} Copy`;
+  clone.layout = { ...getNextPanelLayout(), w: panel.layout?.w || 6, h: panel.layout?.h || 4 };
+  clone.refresh = { mode: "manual", last_refreshed_utc: null };
+  addPanelToDashboard(clone);
+  showToast("Panel duplicated.", "success");
 }
 
 function updatePanelTitle(panelId) {
@@ -2432,6 +2465,7 @@ async function renderTimeseriesPanel(panel, mount) {
   const body = mount.querySelector(".dashboard-panel-body");
   body.innerHTML = `
     <div class="dashboard-meta">
+      Chart: ${panel.settings.chart_type || "line"} |
       Aggregation: ${panel.settings.aggregation || "avg"} |
       Mode: ${panel.settings.chart_mode || "raw"} |
       Last Refreshed: ${formatTimestamp(panel.refresh.last_refreshed_utc)}
@@ -2450,6 +2484,8 @@ async function renderTimeseriesPanel(panel, mount) {
     body.querySelector("canvas"),
     response.series || [],
     panel.settings.chart_mode || "raw",
+    panel.settings.chart_type || "line",
+    panel.settings.aggregation || "avg",
   );
 }
 
@@ -2488,31 +2524,7 @@ async function refreshPanel(panelId) {
     return;
   }
   try {
-    panel.data.error = null;
-    if (panel.type === "timeseries") {
-      panel.data.response = await apiPost(
-        "/api/timeseries/query",
-        buildChartPayload(panel.series, {
-          start_utc: panel.settings.start_utc,
-          end_utc: panel.settings.end_utc,
-          bucket_seconds: panel.settings.bucket_seconds,
-          aggregation: panel.settings.aggregation,
-        }),
-      );
-    } else if (panel.type === "relationship_results") {
-      panel.data.response = await apiPost("/api/analysis/relationships", panel.settings.request);
-    } else if (panel.type === "tag_profile") {
-      const params = new URLSearchParams();
-      if (panel.settings.start_utc) {
-        params.set("start_utc", panel.settings.start_utc);
-      }
-      if (panel.settings.end_utc) {
-        params.set("end_utc", panel.settings.end_utc);
-      }
-      panel.data.profile = await apiGet(
-        `/api/machines/${panel.settings.machine_id}/tags/${panel.settings.tag_id}/profile?${params.toString()}`
-      );
-    }
+    await hydratePanelData(panel);
     panel.refresh.last_refreshed_utc = new Date().toISOString();
     renderDashboardGrid();
     markDashboardDirty(true);
@@ -2556,14 +2568,17 @@ async function renderDashboardPanel(panel, mount) {
     <div class="dashboard-panel-head">
       <div class="dashboard-panel-title">
         <h2>${panel.title}</h2>
-        <span class="type-badge ${panel.type}">${panel.type}</span>
+        <span class="type-badge ${panel.type}">${escapeHtml(panelTypeLabel(panel))}</span>
       </div>
       <div class="dashboard-panel-actions">
         <button class="mini-btn" data-panel-refresh="${panel.id}">Refresh</button>
+        <button class="mini-btn" data-panel-edit="${panel.id}">Edit</button>
+        <button class="mini-btn" data-panel-duplicate="${panel.id}">Duplicate</button>
         <button class="mini-btn" data-panel-title="${panel.id}">Edit Title</button>
         <button class="mini-btn danger-tone" data-panel-remove="${panel.id}">Remove</button>
       </div>
     </div>
+    <div class="dashboard-meta">${escapeHtml(summarizePanelDataSource(panel))}</div>
     <div class="dashboard-layout-row">
       <div class="dashboard-panel-controls">
         <button class="mini-btn" data-panel-left="${panel.id}">←</button>
@@ -2591,6 +2606,8 @@ async function renderDashboardPanel(panel, mount) {
   `;
 
   mount.querySelector(`[data-panel-refresh="${panel.id}"]`).addEventListener("click", () => refreshPanel(panel.id));
+  mount.querySelector(`[data-panel-edit="${panel.id}"]`).addEventListener("click", async () => editPanelInBuilder(panel.id));
+  mount.querySelector(`[data-panel-duplicate="${panel.id}"]`).addEventListener("click", () => duplicatePanel(panel.id));
   mount.querySelector(`[data-panel-title="${panel.id}"]`).addEventListener("click", () => updatePanelTitle(panel.id));
   mount.querySelector(`[data-panel-remove="${panel.id}"]`).addEventListener("click", () => removeDashboardPanel(panel.id));
   mount.querySelector(`[data-panel-left="${panel.id}"]`).addEventListener("click", () => updatePanelLayout(panel.id, { x: panel.layout.x - 1 }));
@@ -2606,6 +2623,8 @@ async function renderDashboardPanel(panel, mount) {
 
   if (panel.type === "timeseries") {
     await renderTimeseriesPanel(panel, mount);
+  } else if (panel.type === "kpi") {
+    renderKpiPanel(panel, mount);
   } else if (panel.type === "relationship_results") {
     renderRelationshipPanel(panel, mount);
   } else if (panel.type === "tag_profile") {
@@ -2620,8 +2639,8 @@ async function renderDashboardGrid() {
   if (!state.currentDashboard || !(state.currentDashboard.panels || []).length) {
     empty.classList.remove("hidden");
     empty.textContent = state.currentDashboard?.name
-      ? "This dashboard has no panels yet. Add panels from Explore, then save."
-      : "Create or load a dashboard, then add panels from Explore.";
+      ? "This dashboard has no panels yet. Create a panel from the builder on the left."
+      : "Create or load a dashboard, then create a panel from the builder on the left.";
     return;
   }
   empty.classList.add("hidden");
@@ -2781,6 +2800,7 @@ function bindEvents() {
     markDashboardDirty(false);
     setDashboardStatus("New unsaved dashboard created.");
     document.getElementById("dashboard-select").value = "";
+    resetDashboardBuilderForm();
     updateWorkflowSteps();
   });
   document.getElementById("save-dashboard-btn").addEventListener("click", saveCurrentDashboard);
@@ -2790,7 +2810,6 @@ function bindEvents() {
   });
   document.getElementById("add-chart-panel-btn").addEventListener("click", addCurrentChartPanel);
   document.getElementById("add-relationship-panel-btn").addEventListener("click", addRelationshipResultsPanel);
-  document.getElementById("add-profile-panel-btn").addEventListener("click", addTargetProfilePanel);
   document.getElementById("refresh-all-panels-btn").addEventListener("click", refreshAllPanels);
   document.getElementById("dashboard-name").addEventListener("input", () => {
     ensureCurrentDashboard().name = document.getElementById("dashboard-name").value;
@@ -2800,6 +2819,34 @@ function bindEvents() {
     ensureCurrentDashboard().description = document.getElementById("dashboard-description").value;
     markDashboardDirty(true);
   });
+  document.getElementById("builder-machine-select").addEventListener("change", async () => {
+    state.builderSelectedTagIds = new Set();
+    renderDashboardBuilderSelectedTags();
+    await loadDashboardBuilderTags();
+  });
+  document.getElementById("builder-refresh-tags-btn").addEventListener("click", loadDashboardBuilderTags);
+  document.getElementById("builder-tag-search").addEventListener("input", renderDashboardBuilderTagList);
+  document.getElementById("builder-tag-search").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      renderDashboardBuilderTagList();
+    }
+  });
+  document.getElementById("builder-use-scored-profiles").addEventListener("change", loadDashboardBuilderTags);
+  document.getElementById("builder-panel-type").addEventListener("change", () => {
+    const type = getBuilderPanelType();
+    if (["kpi", "tag_profile", "relationship_results"].includes(type) && state.builderSelectedTagIds.size > 1) {
+      const first = state.builderSelectedTagIds.values().next().value;
+      state.builderSelectedTagIds = new Set(first ? [first] : []);
+    }
+    document.getElementById("builder-panel-title").value = defaultBuilderTitle(type, getBuilderSelectedTags());
+    renderDashboardBuilderTagList();
+    renderDashboardBuilderSelectedTags();
+  });
+  document.getElementById("builder-preview-btn").addEventListener("click", previewBuilderPanel);
+  document.getElementById("builder-add-panel-btn").addEventListener("click", addBuilderPanelToDashboard);
+  document.getElementById("builder-update-panel-btn").addEventListener("click", updatePanelFromBuilder);
+  document.getElementById("builder-cancel-edit-btn").addEventListener("click", cancelPanelEdit);
 
   for (const button of document.querySelectorAll("[data-tag-filter]")) {
     button.addEventListener("click", () => {
@@ -2840,8 +2887,12 @@ async function init() {
   document.getElementById("results-sort").value = state.resultSort;
   document.getElementById("tag-sort").value = state.tagSort;
   syncDashboardInputs();
+  syncBuilderDefaultsFromExplore();
+  syncDashboardBuilderEditingState();
   renderTargetTag();
   renderTagList();
+  renderDashboardBuilderTagList();
+  renderDashboardBuilderSelectedTags();
   renderAnalysisSummary(null);
   renderRelationshipResults();
   renderSelectedSeriesList();
@@ -2853,6 +2904,9 @@ async function init() {
   await Promise.all([loadMachines(), loadDashboards()]);
   if (state.selectedMachineId) {
     await loadTags();
+  }
+  if (getBuilderMachineId()) {
+    await loadDashboardBuilderTags();
   }
 }
 
