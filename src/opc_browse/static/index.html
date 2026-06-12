@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OPC Browse Data Explorer</title>
+  <link rel="stylesheet" href="/static/css/explorer.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>OPC Browse Data Explorer</h1>
+        <p class="subtle">Explore live OPC tag data, capture reusable panels, and save dashboard layouts as JSON.</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="status-group">
+          <span class="status-label">API Status</span>
+          <span id="health-status" class="status-pill pending">Checking...</span>
+        </div>
+        <button id="reset-workspace-btn" class="primary-btn secondary-tone">Reset Workspace</button>
+      </div>
+    </header>
+
+    <div id="error-box" class="error-box hidden">
+      <div id="error-message"></div>
+      <button id="dismiss-error-btn" class="mini-btn">Dismiss</button>
+    </div>
+
+    <section class="panel dashboard-bar">
+      <div class="dashboard-bar-grid">
+        <div class="dashboard-block">
+          <div class="section-head compact-head">
+            <h2>Saved Dashboards</h2>
+            <span id="dashboard-loading" class="loading-text hidden">Loading...</span>
+          </div>
+          <div class="dashboard-inline">
+            <select id="dashboard-select">
+              <option value="">No dashboard selected</option>
+            </select>
+            <button id="new-dashboard-btn" class="mini-btn">New</button>
+            <button id="save-dashboard-btn" class="mini-btn">Save</button>
+            <button id="delete-dashboard-btn" class="mini-btn danger-tone">Delete</button>
+          </div>
+          <div class="dashboard-status-row">
+            <span id="dashboard-status" class="subtle">Start with Explore, then add panels and save a dashboard.</span>
+            <span id="dashboard-dirty-indicator" class="dirty-indicator hidden">Unsaved changes</span>
+          </div>
+        </div>
+        <div class="dashboard-block">
+          <label class="field">
+            <span>Dashboard Name</span>
+            <input id="dashboard-name" type="text" placeholder="Line 1 Process Overview">
+          </label>
+        </div>
+        <div class="dashboard-block">
+          <label class="field">
+            <span>Dashboard Description</span>
+            <input id="dashboard-description" type="text" placeholder="Short notes about this dashboard">
+          </label>
+        </div>
+        <div class="dashboard-block">
+          <span class="field-label">Add Panels</span>
+          <div class="dashboard-inline">
+            <button id="add-chart-panel-btn" class="mini-btn">Add Current Chart As Panel</button>
+            <button id="add-relationship-panel-btn" class="mini-btn">Add Relationship Results As Panel</button>
+            <button id="add-profile-panel-btn" class="mini-btn">Add Target Tag Profile As Panel</button>
+            <button id="refresh-all-panels-btn" class="mini-btn">Refresh All Panels</button>
+          </div>
+          <div id="refresh-all-status" class="subtle">Panels refresh manually.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="tab-row">
+      <button id="tab-explore" class="tab-btn active" data-tab="explore">Explore</button>
+      <button id="tab-dashboards" class="tab-btn" data-tab="dashboards">Dashboards</button>
+    </div>
+
+    <section id="explore-view" class="tab-view active">
+      <main class="layout-grid">
+        <aside class="panel sidebar-panel">
+          <section class="panel-section">
+            <div class="section-head compact-head">
+              <h2>Machines</h2>
+              <span id="machine-loading" class="loading-text hidden">Loading...</span>
+            </div>
+            <label class="field">
+              <span>Machine</span>
+              <select id="machine-select">
+                <option value="">Loading machines...</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="panel-section grow-section">
+            <div class="section-head compact-head">
+              <h2>Tags</h2>
+              <span id="tag-loading" class="loading-text hidden">Loading...</span>
+            </div>
+            <label class="field">
+              <span>Tag Search</span>
+              <input id="tag-search" type="text" placeholder="Search opc_path, display_name, tag_id">
+            </label>
+            <div class="inline-controls">
+              <label class="checkbox-row">
+                <input id="numeric-only" type="checkbox" checked>
+                <span>Numeric only</span>
+              </label>
+              <button id="refresh-tags-btn" class="primary-btn secondary-tone">Refresh Tags</button>
+            </div>
+            <div class="filter-cluster">
+              <span class="filter-label">Quick Filters</span>
+              <div class="filter-row" id="tag-filter-row">
+                <button class="filter-chip active" data-tag-filter="all_numeric">All numeric</button>
+                <button class="filter-chip" data-tag-filter="recently_active">Recently active</button>
+                <button class="filter-chip" data-tag-filter="high_sample">High sample count</button>
+                <button class="filter-chip" data-tag-filter="stale">Stale</button>
+              </div>
+            </div>
+            <div id="tag-list" class="tag-list"></div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Selected Target</h2>
+            <div id="target-card" class="target-card empty-state">Select a numeric tag to begin.</div>
+          </section>
+        </aside>
+
+        <section class="panel center-panel">
+          <section class="panel-section">
+            <div class="section-head compact-head">
+              <h2>Relationship Controls</h2>
+              <span id="analysis-loading" class="loading-text hidden">Running...</span>
+            </div>
+            <div class="control-grid">
+              <label class="field">
+                <span>Start UTC</span>
+                <input id="start-utc" type="text" placeholder="2026-06-11T00:00:00Z">
+              </label>
+              <label class="field">
+                <span>End UTC</span>
+                <input id="end-utc" type="text" placeholder="2026-06-12T00:00:00Z">
+              </label>
+              <label class="field">
+                <span>Bucket Seconds</span>
+                <input id="bucket-seconds" type="number" min="1" value="60">
+              </label>
+              <label class="field">
+                <span>Candidate Scope</span>
+                <select id="candidate-scope">
+                  <option value="same_machine">same_machine</option>
+                  <option value="same_folder">same_folder</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Max Candidate Tags</span>
+                <input id="max-candidate-tags" type="number" min="1" value="300">
+              </label>
+              <label class="field">
+                <span>Max Results</span>
+                <input id="max-results" type="number" min="1" value="25">
+              </label>
+              <label class="field">
+                <span>Min Pair Count</span>
+                <input id="min-pair-count" type="number" min="3" value="30">
+              </label>
+              <label class="field">
+                <span>Max Lag Seconds</span>
+                <input id="max-lag-seconds" type="number" min="0" value="1800">
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="run-analysis-btn" class="primary-btn">Run Analysis</button>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-head compact-head">
+              <h2>Diagnostics</h2>
+              <span id="results-count" class="subtle">No results loaded.</span>
+            </div>
+            <div class="summary-grid">
+              <div><span class="summary-label">Candidates Scanned</span><strong id="summary-scanned">-</strong></div>
+              <div><span class="summary-label">Candidates Analyzed</span><strong id="summary-analyzed">-</strong></div>
+              <div><span class="summary-label">Skipped Count</span><strong id="summary-skipped">-</strong></div>
+              <div><span class="summary-label">Warnings</span><strong id="summary-warnings">-</strong></div>
+            </div>
+            <div class="diagnostics-grid">
+              <div class="diagnostic-card">
+                <h3>Skipped By Reason</h3>
+                <ul id="skipped-by-reason-list" class="diagnostic-list"><li>-</li></ul>
+              </div>
+              <div class="diagnostic-card">
+                <h3>Warnings</h3>
+                <ul id="warning-list" class="warning-list"><li>-</li></ul>
+              </div>
+              <div class="diagnostic-card">
+                <h3>Settings Used</h3>
+                <ul id="analysis-settings-list" class="diagnostic-list"><li>-</li></ul>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel-section grow-section">
+            <div class="section-head">
+              <h2>Relationship Results</h2>
+              <div class="inline-tools">
+                <select id="results-sort">
+                  <option value="score_desc">Score desc</option>
+                  <option value="abs_lag_desc">Abs lag desc</option>
+                  <option value="pair_count_desc">Pair count desc</option>
+                  <option value="display_name_asc">Display name</option>
+                </select>
+                <button id="select-top-5-btn" class="mini-btn">Select Top 5</button>
+                <button id="clear-selected-btn" class="mini-btn">Clear Selected</button>
+              </div>
+            </div>
+            <div class="filter-cluster">
+              <span class="filter-label">Relationship Filter</span>
+              <div class="filter-row" id="relationship-filter-row">
+                <button class="filter-chip active" data-relationship-filter="all">All</button>
+                <button class="filter-chip" data-relationship-filter="moves_together">Moves together</button>
+                <button class="filter-chip" data-relationship-filter="possible_driver">Possible drivers</button>
+                <button class="filter-chip" data-relationship-filter="possible_effect">Possible effects</button>
+                <button class="filter-chip" data-relationship-filter="changes_together">Changes together</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="results-table">
+                <thead>
+                  <tr>
+                    <th>Add</th>
+                    <th>Rank</th>
+                    <th>Relationship</th>
+                    <th>Score</th>
+                    <th>Same Time</th>
+                    <th>Delta</th>
+                    <th>Best Lag</th>
+                    <th>Lag Seconds</th>
+                    <th>Pairs</th>
+                    <th>Display Name</th>
+                    <th>OPC Path</th>
+                  </tr>
+                </thead>
+                <tbody id="results-table-body">
+                  <tr><td colspan="11" class="empty-cell">Run analysis to see related tags.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel chart-panel">
+          <section class="panel-section grow-section">
+            <div class="section-head compact-head">
+              <h2>Chart Workspace</h2>
+              <span id="chart-loading" class="loading-text hidden">Loading...</span>
+            </div>
+            <div class="control-grid chart-control-grid">
+              <label class="field">
+                <span>Chart Mode</span>
+                <select id="chart-mode">
+                  <option value="raw">raw</option>
+                  <option value="normalized">normalized</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Aggregation</span>
+                <select id="chart-aggregation">
+                  <option value="avg">avg</option>
+                  <option value="min">min</option>
+                  <option value="max">max</option>
+                </select>
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="plot-selected-btn" class="primary-btn">Plot Target + Selected Related Tags</button>
+              <button id="clear-chart-btn" class="primary-btn secondary-tone">Clear Chart</button>
+            </div>
+            <div id="chart-warning" class="chart-warning hidden"></div>
+            <div class="selected-series">
+              <h3>Selected Plotted Series</h3>
+              <ul id="selected-series-list"><li>No series selected.</li></ul>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="trend-chart"></canvas>
+            </div>
+          </section>
+        </section>
+      </main>
+    </section>
+
+    <section id="dashboards-view" class="tab-view">
+      <div id="dashboard-empty" class="panel dashboard-empty-state">
+        Create or load a dashboard, then add panels from Explore.
+      </div>
+      <div id="dashboard-panel-grid" class="dashboard-panel-grid"></div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="/static/js/explorer.js"></script>
+</body>
+</html>
