@@ -50,6 +50,9 @@ def test_root_route_returns_html():
     assert b"Choose a machine and target tag" in body
     assert b"Use scored profiles" in body
     assert b"toast-container" in body
+    assert b"Dashboard Builder" in body
+    assert b"dashboard-builder" in body
+    assert b"dashboard-canvas" in body
 
 
 def test_static_files_mount_exists():
