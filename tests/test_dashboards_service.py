@@ -137,3 +137,22 @@ def test_panel_sort_key_orders_by_y_then_x():
     ]
     ordered = sorted(panels, key=panel_sort_key)
     assert [panel["id"] for panel in ordered] == ["a", "b", "c"]
+
+
+def test_validation_accepts_kpi_panel_settings():
+    payload = validate_dashboard_payload(
+        {
+            "name": "KPI Dashboard",
+            "workspace": {},
+            "panels": [
+                {
+                    "id": "panel_1",
+                    "type": "kpi",
+                    "title": "Speed KPI",
+                    "settings": {"machine_id": 1, "tag_id": 123},
+                    "series": [],
+                }
+            ],
+        }
+    )
+    assert payload["panels"][0]["type"] == "kpi"

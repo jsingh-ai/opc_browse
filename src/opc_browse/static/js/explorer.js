@@ -46,10 +46,15 @@ const state = {
   currentDashboard: null,
   currentTab: "explore",
   panelCharts: {},
+  builderPreviewChart: null,
+  builderEditingPanelId: null,
+  builderTags: [],
+  builderSelectedTagIds: new Set(),
   dashboardDirty: false,
   loading: {
     machines: false,
     tags: false,
+    builderTags: false,
     analysis: false,
     chart: false,
     dashboards: false,
@@ -139,6 +144,10 @@ function updateWorkflowSteps() {
 
 function generatePanelId() {
   return `panel_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function tagDisplayLabel(tag) {
+  return tag?.display_name || tag?.browse_name || tag?.opc_path || `Tag ${tag?.tag_id ?? ""}`.trim();
 }
 
 // ============================================================================
@@ -327,6 +336,7 @@ function setSectionLoading(sectionName, isLoading, message = "") {
     health: { loadingId: "health-status" },
     machines: { loadingId: "machine-loading", panelId: "machine-browser-panel" },
     tags: { loadingId: "tag-loading", panelId: "machine-browser-panel" },
+    builderTags: { loadingId: "builder-tag-loading", panelId: null },
     analysis: { loadingId: "analysis-loading", panelId: "relationship-panel" },
     chart: { loadingId: "chart-loading", panelId: "chart-panel-card" },
     dashboards: { loadingId: "dashboard-loading", panelId: null },
@@ -505,17 +515,21 @@ async function loadHealth() {
 
 async function loadMachines() {
   const select = document.getElementById("machine-select");
+  const builderSelect = document.getElementById("builder-machine-select");
   await withLoading("machines", async () => {
     try {
       const machines = await apiGet("/api/machines");
       state.machines = machines;
       select.innerHTML = "";
+      builderSelect.innerHTML = "";
       if (!machines.length) {
         select.innerHTML = '<option value="">No enabled machines found</option>';
+        builderSelect.innerHTML = '<option value="">No enabled machines found</option>';
         setGlobalStatus("No enabled machines returned by the API.", "warning");
         return;
       }
       select.innerHTML = '<option value="">Select a machine</option>';
+      builderSelect.innerHTML = '<option value="">Select a machine</option>';
       for (const machine of machines) {
         const option = document.createElement("option");
         option.value = String(machine.id);
@@ -524,11 +538,20 @@ async function loadMachines() {
           option.selected = true;
         }
         select.appendChild(option);
+
+        const builderOption = document.createElement("option");
+        builderOption.value = String(machine.id);
+        builderOption.textContent = `${machine.machine_name} (${machine.id})`;
+        builderSelect.appendChild(builderOption);
+      }
+      if (!builderSelect.value && state.selectedMachineId) {
+        builderSelect.value = String(state.selectedMachineId);
       }
       setGlobalStatus(`Loaded ${machines.length} machine(s).`, "success");
     } catch (error) {
       showError(`Failed to load machines: ${error.message}`);
       select.innerHTML = '<option value="">Failed to load machines</option>';
+      builderSelect.innerHTML = '<option value="">Failed to load machines</option>';
       setGlobalStatus("Machine loading failed.", "danger");
     }
   }, "Loading...");
@@ -1221,18 +1244,52 @@ function buildDatasetsFromTimeseries(series, chartMode) {
   return { labels, datasets };
 }
 
-function createChart(canvas, series, chartMode) {
+function buildBarChartData(series, aggregation) {
+  const palette = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#ea580c", "#65a30d"];
+  return {
+    labels: series.map((entry) => entry.label || `Tag ${entry.tag_id}`),
+    datasets: [
+      {
+        label: aggregation || "avg",
+        data: series.map((entry) => {
+          const points = entry.points || [];
+          if (!points.length) {
+            return null;
+          }
+          if (aggregation === "min") {
+            return Math.min(...points.map((point) => point.min_value ?? point.v).filter((value) => typeof value === "number"));
+          }
+          if (aggregation === "max") {
+            return Math.max(...points.map((point) => point.max_value ?? point.v).filter((value) => typeof value === "number"));
+          }
+          const values = points.map((point) => point.v).filter((value) => typeof value === "number");
+          if (!values.length) {
+            return null;
+          }
+          return values.reduce((sum, value) => sum + value, 0) / values.length;
+        }),
+        backgroundColor: series.map((_, index) => palette[index % palette.length]),
+        borderColor: series.map((_, index) => palette[index % palette.length]),
+        borderWidth: 1,
+      },
+    ],
+  };
+}
+
+function createChart(canvas, series, chartMode, chartType = "line", aggregation = "avg") {
   const context = canvas.getContext("2d");
-  const { labels, datasets } = buildDatasetsFromTimeseries(series, chartMode);
+  const chartData = chartType === "bar"
+    ? buildBarChartData(series, aggregation)
+    : buildDatasetsFromTimeseries(series, chartMode);
   return new Chart(context, {
-    type: "line",
-    data: { labels, datasets },
+    type: chartType,
+    data: chartData,
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "nearest", intersect: false },
       plugins: {
-        legend: { labels: { color: "#e6edf3" } },
+        legend: { labels: { color: "#334155" } },
         tooltip: {
           callbacks: {
             title(items) {
@@ -1248,23 +1305,23 @@ function createChart(canvas, series, chartMode) {
       scales: {
         x: {
           ticks: {
-            color: "#99a8b5",
+            color: "#64748b",
             maxRotation: 0,
             callback(value, index) {
-              const label = labels[index] || "";
+              const label = chartData.labels[index] || "";
               return label.replace("T", " ").replace("+00:00", " UTC");
             },
           },
-          grid: { color: "rgba(153, 168, 181, 0.12)" },
+          grid: { color: "rgba(148, 163, 184, 0.18)" },
         },
         y: {
           ticks: {
-            color: "#99a8b5",
+            color: "#64748b",
             callback(value) {
               return chartMode === "normalized" ? Number(value).toFixed(2) : value;
             },
           },
-          grid: { color: "rgba(153, 168, 181, 0.12)" },
+          grid: { color: "rgba(148, 163, 184, 0.18)" },
         },
       },
     },
@@ -1330,6 +1387,7 @@ async function plotSelectedSeries() {
 function renderChart(series) {
   const canvas = document.getElementById("trend-chart");
   const chartMode = document.getElementById("chart-mode").value;
+  const aggregation = document.getElementById("chart-aggregation").value;
   const chartWarning = document.getElementById("chart-warning");
   if (state.chart) {
     state.chart.destroy();
@@ -1342,7 +1400,7 @@ function renderChart(series) {
     chartWarning.classList.add("hidden");
     chartWarning.textContent = "";
   }
-  state.chart = createChart(canvas, series, chartMode);
+  state.chart = createChart(canvas, series, chartMode, "line", aggregation);
   updateChartPlaceholder();
 }
 
@@ -1387,6 +1445,457 @@ function applyFilterButtonState(containerId, activeValue, attributeName) {
   for (const button of container.querySelectorAll(`[${attributeName}]`)) {
     button.classList.toggle("active", button.getAttribute(attributeName) === activeValue);
   }
+}
+
+function getBuilderMachineId() {
+  const value = document.getElementById("builder-machine-select").value;
+  return value ? Number(value) : null;
+}
+
+function getBuilderPanelType() {
+  return document.getElementById("builder-panel-type").value;
+}
+
+function getBuilderSelectedTags() {
+  return state.builderTags.filter((tag) => state.builderSelectedTagIds.has(tag.tag_id));
+}
+
+function renderDashboardBuilderSelectedTags() {
+  const list = document.getElementById("builder-selected-tags-list");
+  const tags = getBuilderSelectedTags();
+  list.innerHTML = "";
+  if (!tags.length) {
+    list.innerHTML = "<li>No tags selected.</li>";
+    return;
+  }
+  for (const tag of tags) {
+    const item = document.createElement("li");
+    item.textContent = `${tagDisplayLabel(tag)} (${tag.tag_id})`;
+    list.appendChild(item);
+  }
+}
+
+function builderSearchValue() {
+  return document.getElementById("builder-tag-search").value.trim().toLowerCase();
+}
+
+function renderDashboardBuilderTagList() {
+  const container = document.getElementById("builder-tag-list");
+  const machineId = getBuilderMachineId();
+  container.innerHTML = "";
+  if (!machineId) {
+    container.innerHTML = createEmptyState("No machine selected", "Choose a machine for the dashboard panel.");
+    return;
+  }
+  const search = builderSearchValue();
+  const tags = state.builderTags.filter((tag) => {
+    if (!search) {
+      return true;
+    }
+    return [
+      tag.display_name,
+      tag.browse_name,
+      tag.opc_path,
+      tag.tag_id,
+      tag.data_type,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(search);
+  });
+  if (!tags.length) {
+    container.innerHTML = createEmptyState("No tags found", "Adjust the builder search or load a different machine.");
+    return;
+  }
+  for (const tag of sortTags(tags)) {
+    const usefulness = getTagUsefulness(tag);
+    const item = document.createElement("div");
+    item.className = "tag-item";
+    if (state.builderSelectedTagIds.has(tag.tag_id)) {
+      item.classList.add("selected");
+    }
+    if (usefulness?.grade && ["high", "medium"].includes(usefulness.grade) && usefulness.semantic_type === "continuous_numeric") {
+      item.classList.add("selected-recommended");
+    }
+    item.innerHTML = `
+      <div class="tag-item-head">
+        <div class="tag-item-title">${tagDisplayLabel(tag)}</div>
+        <div class="badge-row">
+          ${usefulness ? createBadge(usefulness.grade, usefulness.grade) : ""}
+          ${usefulness ? createBadge(usefulness.semantic_type, "semantic") : ""}
+        </div>
+      </div>
+      <div class="tag-item-meta">Tag ID: ${tag.tag_id} | Samples: ${tag.sample_count ?? "-"}</div>
+      <div class="tag-item-meta">${tag.opc_path || "-"}</div>
+    `;
+    item.addEventListener("click", () => {
+      const type = getBuilderPanelType();
+      const singleSelectTypes = new Set(["kpi", "tag_profile", "relationship_results"]);
+      if (singleSelectTypes.has(type)) {
+        state.builderSelectedTagIds = new Set([tag.tag_id]);
+      } else if (state.builderSelectedTagIds.has(tag.tag_id)) {
+        state.builderSelectedTagIds.delete(tag.tag_id);
+      } else {
+        state.builderSelectedTagIds.add(tag.tag_id);
+      }
+      renderDashboardBuilderTagList();
+      renderDashboardBuilderSelectedTags();
+    });
+    container.appendChild(item);
+  }
+}
+
+async function loadDashboardBuilderTags() {
+  const machineId = getBuilderMachineId();
+  if (!machineId) {
+    state.builderTags = [];
+    state.builderSelectedTagIds = new Set();
+    renderDashboardBuilderTagList();
+    renderDashboardBuilderSelectedTags();
+    return;
+  }
+  const useScored = document.getElementById("builder-use-scored-profiles").checked;
+  const search = document.getElementById("builder-tag-search").value.trim();
+  const params = new URLSearchParams({
+    numeric_only: "true",
+    limit: "1000",
+  });
+  if (search) {
+    params.set("search", search);
+  }
+  const previouslySelectedIds = new Set(state.builderSelectedTagIds);
+  disableButton("builder-refresh-tags-btn", true);
+  await withLoading("builderTags", async () => {
+    try {
+      if (useScored) {
+        const response = await apiGet(`/api/machines/${machineId}/tags/profiles?${params.toString()}`);
+        state.builderTags = (response.profiles || []).map((tag) => ({
+          ...tag,
+          is_numeric: Number(tag.numeric_sample_count || 0) > 0,
+          folder_name: folderNameFromTag(tag),
+        }));
+      } else {
+        const tree = await apiGet(`/api/machines/${machineId}/tags/tree?${params.toString()}`);
+        state.builderTags = flattenTagTree(tree).map((tag) => ({
+          ...tag,
+          folder_name: folderNameFromTag(tag),
+        }));
+      }
+      state.builderSelectedTagIds = new Set(
+        Array.from(previouslySelectedIds).filter((tagId) =>
+          state.builderTags.some((tag) => tag.tag_id === tagId)
+        )
+      );
+      renderDashboardBuilderTagList();
+      renderDashboardBuilderSelectedTags();
+    } catch (error) {
+      state.builderTags = [];
+      renderDashboardBuilderTagList();
+      showError(`Failed to load dashboard builder tags: ${error.message}`);
+    }
+  }, "Loading...");
+  disableButton("builder-refresh-tags-btn", false);
+}
+
+function defaultBuilderTitle(panelType, selectedTags) {
+  if (!selectedTags.length) {
+    return panelType === "line_trend" ? "Line trend" : panelType.replaceAll("_", " ");
+  }
+  if (panelType === "kpi") {
+    return `${tagDisplayLabel(selectedTags[0])} KPI`;
+  }
+  if (panelType === "tag_profile") {
+    return `${tagDisplayLabel(selectedTags[0])} Profile`;
+  }
+  if (panelType === "relationship_results") {
+    return `${tagDisplayLabel(selectedTags[0])} Relationships`;
+  }
+  return selectedTags.length > 1
+    ? `${tagDisplayLabel(selectedTags[0])} + ${selectedTags.length - 1} more`
+    : tagDisplayLabel(selectedTags[0]);
+}
+
+function builderTimeSettings() {
+  return {
+    start_utc: document.getElementById("builder-start-utc").value.trim(),
+    end_utc: document.getElementById("builder-end-utc").value.trim(),
+    bucket_seconds: Number(document.getElementById("builder-bucket-seconds").value),
+    aggregation: document.getElementById("builder-aggregation").value,
+    chart_mode: document.getElementById("builder-chart-mode").value,
+  };
+}
+
+function validatePanelBuilder() {
+  const panelType = getBuilderPanelType();
+  const machineId = getBuilderMachineId();
+  const selectedTags = getBuilderSelectedTags();
+  const timeSettings = builderTimeSettings();
+
+  if (!machineId) {
+    throw new Error("Select a machine for the dashboard panel.");
+  }
+  if (!timeSettings.start_utc || !timeSettings.end_utc) {
+    throw new Error("Start UTC and End UTC are required for the dashboard panel.");
+  }
+  if (new Date(timeSettings.start_utc).getTime() >= new Date(timeSettings.end_utc).getTime()) {
+    throw new Error("Start UTC must be before End UTC.");
+  }
+  if (timeSettings.bucket_seconds < 1) {
+    throw new Error("Bucket seconds must be at least 1.");
+  }
+  if (["line_trend", "bar_chart"].includes(panelType) && selectedTags.length < 1) {
+    throw new Error("Line and bar panels require at least one selected tag.");
+  }
+  if (["kpi", "tag_profile", "relationship_results"].includes(panelType) && selectedTags.length !== 1) {
+    throw new Error("This panel type requires exactly one selected tag.");
+  }
+  if (!document.getElementById("builder-panel-title").value.trim()) {
+    document.getElementById("builder-panel-title").value = defaultBuilderTitle(panelType, selectedTags);
+  }
+}
+
+function buildPanelFromBuilder() {
+  validatePanelBuilder();
+  const panelType = getBuilderPanelType();
+  const machineId = getBuilderMachineId();
+  const selectedTags = getBuilderSelectedTags();
+  const timeSettings = builderTimeSettings();
+  const title = document.getElementById("builder-panel-title").value.trim();
+  const width = Number(document.getElementById("builder-panel-width").value);
+  const height = Number(document.getElementById("builder-panel-height").value);
+  const base = {
+    id: state.builderEditingPanelId || generatePanelId(),
+    title,
+    layout: { ...getNextPanelLayout(), w: width, h: height },
+    refresh: { mode: "manual", last_refreshed_utc: null },
+    settings: {},
+    series: [],
+    data: {},
+  };
+
+  if (panelType === "line_trend" || panelType === "bar_chart") {
+    return {
+      ...base,
+      type: "timeseries",
+      settings: {
+        chart_type: panelType === "bar_chart" ? "bar" : "line",
+        aggregation: timeSettings.aggregation,
+        chart_mode: timeSettings.chart_mode,
+        start_utc: timeSettings.start_utc,
+        end_utc: timeSettings.end_utc,
+        bucket_seconds: timeSettings.bucket_seconds,
+      },
+      series: selectedTags.map((tag) => ({
+        machine_id: machineId,
+        tag_id: tag.tag_id,
+        label: tagDisplayLabel(tag),
+      })),
+      data: {},
+    };
+  }
+  if (panelType === "kpi") {
+    return {
+      ...base,
+      type: "kpi",
+      settings: {
+        machine_id: machineId,
+        tag_id: selectedTags[0].tag_id,
+        label: tagDisplayLabel(selectedTags[0]),
+        start_utc: timeSettings.start_utc,
+        end_utc: timeSettings.end_utc,
+        bucket_seconds: timeSettings.bucket_seconds,
+        aggregation: timeSettings.aggregation,
+      },
+      data: {},
+    };
+  }
+  if (panelType === "tag_profile") {
+    return {
+      ...base,
+      type: "tag_profile",
+      settings: {
+        machine_id: machineId,
+        tag_id: selectedTags[0].tag_id,
+        start_utc: timeSettings.start_utc,
+        end_utc: timeSettings.end_utc,
+      },
+      data: {},
+    };
+  }
+  return {
+    ...base,
+    type: "relationship_results",
+    settings: {
+      request: {
+        target: {
+          machine_id: machineId,
+          tag_id: selectedTags[0].tag_id,
+          label: tagDisplayLabel(selectedTags[0]),
+        },
+        start_utc: timeSettings.start_utc,
+        end_utc: timeSettings.end_utc,
+        bucket_seconds: timeSettings.bucket_seconds,
+        max_points_per_series: 2000,
+        candidate_scope: "same_machine",
+        candidate_tag_ids: null,
+        max_candidate_tags: 300,
+        max_results: 25,
+        min_pair_count: 30,
+        max_lag_seconds: 1800,
+        prefer_useful_candidates: true,
+      },
+    },
+    data: {},
+  };
+}
+
+function summarizePanelDataSource(panel) {
+  if (panel.type === "timeseries") {
+    return `${panel.series.length} tag(s) | ${panel.settings.start_utc || "-"} to ${panel.settings.end_utc || "-"}`;
+  }
+  if (panel.type === "kpi" || panel.type === "tag_profile") {
+    return `Machine ${panel.settings.machine_id} | Tag ${panel.settings.tag_id}`;
+  }
+  if (panel.type === "relationship_results") {
+    return `Target tag ${panel.settings?.request?.target?.tag_id || "-"}`;
+  }
+  return "";
+}
+
+async function hydratePanelData(panel) {
+  panel.data = panel.data || {};
+  panel.data.error = null;
+  if (panel.type === "timeseries") {
+    panel.data.response = await apiPost(
+      "/api/timeseries/query",
+      buildChartPayload(panel.series, {
+        start_utc: panel.settings.start_utc,
+        end_utc: panel.settings.end_utc,
+        bucket_seconds: panel.settings.bucket_seconds,
+        aggregation: panel.settings.aggregation,
+      }),
+    );
+    return;
+  }
+  if (panel.type === "relationship_results") {
+    panel.data.response = await apiPost("/api/analysis/relationships", panel.settings.request);
+    return;
+  }
+  if (panel.type === "tag_profile") {
+    const params = new URLSearchParams();
+    if (panel.settings.start_utc) {
+      params.set("start_utc", panel.settings.start_utc);
+    }
+    if (panel.settings.end_utc) {
+      params.set("end_utc", panel.settings.end_utc);
+    }
+    panel.data.profile = await apiGet(
+      `/api/machines/${panel.settings.machine_id}/tags/${panel.settings.tag_id}/scored-profile?${params.toString()}`
+    );
+    return;
+  }
+  if (panel.type === "kpi") {
+    const params = new URLSearchParams();
+    if (panel.settings.start_utc) {
+      params.set("start_utc", panel.settings.start_utc);
+    }
+    if (panel.settings.end_utc) {
+      params.set("end_utc", panel.settings.end_utc);
+    }
+    panel.data.profile = await apiGet(
+      `/api/machines/${panel.settings.machine_id}/tags/${panel.settings.tag_id}/scored-profile?${params.toString()}`
+    );
+    panel.data.response = await apiPost(
+      "/api/timeseries/query",
+      buildChartPayload(
+        [
+          {
+            machine_id: panel.settings.machine_id,
+            tag_id: panel.settings.tag_id,
+            label: panel.settings.label || `Tag ${panel.settings.tag_id}`,
+          },
+        ],
+        {
+          start_utc: panel.settings.start_utc,
+          end_utc: panel.settings.end_utc,
+          bucket_seconds: panel.settings.bucket_seconds || 60,
+          aggregation: panel.settings.aggregation || "avg",
+        },
+      ),
+    );
+  }
+}
+
+function destroyBuilderPreviewChart() {
+  if (state.builderPreviewChart) {
+    state.builderPreviewChart.destroy();
+    state.builderPreviewChart = null;
+  }
+}
+
+function renderPreviewPanel(panel) {
+  const mount = document.getElementById("dashboard-builder-preview");
+  mount.classList.remove("empty-state");
+  mount.innerHTML = `
+    <div class="dashboard-panel-head">
+      <div class="dashboard-panel-title">
+        <h3>${escapeHtml(panel.title)}</h3>
+        <span class="type-badge ${panel.type}">${panel.type}</span>
+      </div>
+    </div>
+    <div class="dashboard-meta">${escapeHtml(summarizePanelDataSource(panel))}</div>
+    <div class="dashboard-preview-body"></div>
+  `;
+  const body = mount.querySelector(".dashboard-preview-body");
+  if (panel.type === "timeseries") {
+    body.innerHTML = '<div class="dashboard-chart-wrap preview-chart-wrap"><canvas id="builder-preview-chart"></canvas></div>';
+    destroyBuilderPreviewChart();
+    state.builderPreviewChart = createChart(
+      body.querySelector("canvas"),
+      panel.data?.response?.series || [],
+      panel.settings.chart_mode || "raw",
+      panel.settings.chart_type || "line",
+      panel.settings.aggregation || "avg",
+    );
+    return;
+  }
+  if (panel.type === "kpi") {
+    body.innerHTML = renderKpiPanelContent(panel.data?.profile, panel.data?.response, panel.settings.label);
+    return;
+  }
+  if (panel.type === "tag_profile") {
+    body.innerHTML = renderTagProfilePanelContent(panel.data?.profile || null);
+    return;
+  }
+  if (panel.type === "relationship_results") {
+    body.innerHTML = renderRelationshipPanelContent(panel.data?.response || null);
+  }
+}
+
+async function previewBuilderPanel() {
+  clearError();
+  try {
+    const panel = buildPanelFromBuilder();
+    await hydratePanelData(panel);
+    renderPreviewPanel(panel);
+    setText("builder-edit-status", `Preview ready for ${panel.title}.`);
+    showToast("Preview loaded.", "success");
+  } catch (error) {
+    destroyBuilderPreviewChart();
+    document.getElementById("dashboard-builder-preview").innerHTML = createEmptyState(
+      "Preview failed",
+      error.message,
+    );
+    showError(error.message);
+  }
+}
+
+function clearBuilderPreview() {
+  destroyBuilderPreviewChart();
+  const mount = document.getElementById("dashboard-builder-preview");
+  mount.classList.add("empty-state");
+  mount.innerHTML = "Select a panel type, machine, and tags, then click Preview.";
 }
 
 function defaultPanelLayout(index) {
@@ -1436,6 +1945,45 @@ function createBlankDashboard() {
 function syncDashboardInputs() {
   document.getElementById("dashboard-name").value = state.currentDashboard?.name || "";
   document.getElementById("dashboard-description").value = state.currentDashboard?.description || "";
+}
+
+function syncBuilderDefaultsFromExplore() {
+  document.getElementById("builder-start-utc").value = document.getElementById("start-utc").value;
+  document.getElementById("builder-end-utc").value = document.getElementById("end-utc").value;
+  document.getElementById("builder-bucket-seconds").value = document.getElementById("bucket-seconds").value;
+  document.getElementById("builder-aggregation").value = document.getElementById("chart-aggregation").value;
+  document.getElementById("builder-chart-mode").value = document.getElementById("chart-mode").value;
+  if (state.selectedMachineId) {
+    document.getElementById("builder-machine-select").value = String(state.selectedMachineId);
+  }
+}
+
+function syncDashboardBuilderEditingState() {
+  document.getElementById("builder-update-panel-btn").classList.toggle("hidden", !state.builderEditingPanelId);
+  document.getElementById("builder-cancel-edit-btn").classList.toggle("hidden", !state.builderEditingPanelId);
+  document.getElementById("builder-add-panel-btn").classList.toggle("hidden", !!state.builderEditingPanelId);
+  setText(
+    "builder-edit-status",
+    state.builderEditingPanelId
+      ? `Editing panel ${state.builderEditingPanelId}. Update it or cancel edit.`
+      : "Create a panel from the builder on the left.",
+  );
+}
+
+function resetDashboardBuilderForm() {
+  state.builderEditingPanelId = null;
+  state.builderSelectedTagIds = new Set();
+  document.getElementById("builder-panel-type").value = "line_trend";
+  document.getElementById("builder-panel-title").value = "";
+  document.getElementById("builder-panel-width").value = "6";
+  document.getElementById("builder-panel-height").value = "4";
+  document.getElementById("builder-use-scored-profiles").checked = true;
+  document.getElementById("builder-tag-search").value = "";
+  syncBuilderDefaultsFromExplore();
+  renderDashboardBuilderTagList();
+  renderDashboardBuilderSelectedTags();
+  clearBuilderPreview();
+  syncDashboardBuilderEditingState();
 }
 
 function buildDashboardPayload() {
@@ -1576,6 +2124,93 @@ function addPanelToDashboard(panel) {
   markDashboardDirty(true);
   setGlobalStatus("Dashboard changed. Save to persist panel updates.", "warning");
   updateWorkflowSteps();
+}
+
+async function addBuilderPanelToDashboard() {
+  clearError();
+  try {
+    const panel = buildPanelFromBuilder();
+    await hydratePanelData(panel);
+    addPanelToDashboard(panel);
+    renderPreviewPanel(panel);
+    setDashboardStatus(`Added panel ${panel.title}. Save the dashboard to persist it.`);
+    showToast("Dashboard panel added.", "success");
+    resetDashboardBuilderForm();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function editPanelInBuilder(panelId) {
+  const panel = ensureCurrentDashboard().panels.find((item) => item.id === panelId);
+  if (!panel) {
+    return;
+  }
+  state.builderEditingPanelId = panel.id;
+  document.getElementById("builder-panel-title").value = panel.title || "";
+  document.getElementById("builder-panel-width").value = String(panel.layout?.w || 6);
+  document.getElementById("builder-panel-height").value = String(panel.layout?.h || 4);
+  if (panel.type === "timeseries") {
+    document.getElementById("builder-panel-type").value = panel.settings?.chart_type === "bar" ? "bar_chart" : "line_trend";
+    document.getElementById("builder-machine-select").value = String(panel.series?.[0]?.machine_id || "");
+    document.getElementById("builder-start-utc").value = panel.settings?.start_utc || "";
+    document.getElementById("builder-end-utc").value = panel.settings?.end_utc || "";
+    document.getElementById("builder-bucket-seconds").value = panel.settings?.bucket_seconds || 60;
+    document.getElementById("builder-aggregation").value = panel.settings?.aggregation || "avg";
+    document.getElementById("builder-chart-mode").value = panel.settings?.chart_mode || "raw";
+    state.builderSelectedTagIds = new Set((panel.series || []).map((seriesItem) => seriesItem.tag_id));
+  } else if (panel.type === "kpi" || panel.type === "tag_profile") {
+    document.getElementById("builder-panel-type").value = panel.type;
+    document.getElementById("builder-machine-select").value = String(panel.settings?.machine_id || "");
+    document.getElementById("builder-start-utc").value = panel.settings?.start_utc || "";
+    document.getElementById("builder-end-utc").value = panel.settings?.end_utc || "";
+    document.getElementById("builder-bucket-seconds").value = panel.settings?.bucket_seconds || 60;
+    document.getElementById("builder-aggregation").value = panel.settings?.aggregation || "avg";
+    state.builderSelectedTagIds = new Set([panel.settings?.tag_id]);
+  } else if (panel.type === "relationship_results") {
+    document.getElementById("builder-panel-type").value = "relationship_results";
+    const request = panel.settings?.request || {};
+    document.getElementById("builder-machine-select").value = String(request?.target?.machine_id || "");
+    document.getElementById("builder-start-utc").value = request.start_utc || "";
+    document.getElementById("builder-end-utc").value = request.end_utc || "";
+    document.getElementById("builder-bucket-seconds").value = request.bucket_seconds || 60;
+    state.builderSelectedTagIds = new Set([request?.target?.tag_id]);
+  }
+  renderDashboardBuilderTagList();
+  renderDashboardBuilderSelectedTags();
+  syncDashboardBuilderEditingState();
+  showToast(`Editing panel: ${panel.title}`, "info");
+}
+
+async function updatePanelFromBuilder() {
+  if (!state.builderEditingPanelId) {
+    return;
+  }
+  try {
+    const nextPanel = buildPanelFromBuilder();
+    await hydratePanelData(nextPanel);
+    const dashboard = ensureCurrentDashboard();
+    const index = dashboard.panels.findIndex((panel) => panel.id === state.builderEditingPanelId);
+    if (index < 0) {
+      throw new Error("Selected dashboard panel was not found.");
+    }
+    nextPanel.layout.y = dashboard.panels[index].layout?.y || nextPanel.layout.y;
+    nextPanel.layout.x = dashboard.panels[index].layout?.x || nextPanel.layout.x;
+    nextPanel.refresh.last_refreshed_utc = new Date().toISOString();
+    dashboard.panels[index] = nextPanel;
+    renderDashboardGrid();
+    markDashboardDirty(true);
+    showToast("Panel updated.", "success");
+    setDashboardStatus(`Updated panel ${nextPanel.title}. Save the dashboard to persist it.`);
+    resetDashboardBuilderForm();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function cancelPanelEdit() {
+  resetDashboardBuilderForm();
+  showToast("Panel edit canceled.", "info");
 }
 
 function addCurrentChartPanel() {
@@ -1745,7 +2380,17 @@ function renderRelationshipPanelContent(response) {
 }
 
 function renderTagProfilePanelContent(profile) {
+  const usefulness = profile?.usefulness_score || null;
   return `
+    ${
+      usefulness
+        ? `<div class="tag-score-row">
+            ${createBadge(`${usefulness.score}/100`, "semantic")}
+            ${createBadge(usefulness.grade, usefulness.grade)}
+            ${createBadge(usefulness.semantic_type, "semantic")}
+          </div>`
+        : ""
+    }
     <div class="profile-grid">
       <div><strong>Sample Count</strong><div>${profile?.sample_count ?? "-"}</div></div>
       <div><strong>Numeric Samples</strong><div>${profile?.numeric_sample_count ?? "-"}</div></div>
@@ -1755,6 +2400,30 @@ function renderTagProfilePanelContent(profile) {
       <div><strong>Max Value</strong><div>${formatNumber(profile?.max_value)}</div></div>
       <div><strong>Avg Value</strong><div>${formatNumber(profile?.avg_value)}</div></div>
       <div><strong>Std Dev</strong><div>${formatNumber(profile?.stddev_value)}</div></div>
+    </div>
+    ${
+      usefulness?.reasons?.length
+        ? `<div class="dashboard-meta">${escapeHtml(usefulness.reasons.join(" | "))}</div>`
+        : ""
+    }
+  `;
+}
+
+function renderKpiPanelContent(profile, response, label) {
+  const entry = response?.series?.[0] || null;
+  const lastPoint = entry?.points?.length ? entry.points[entry.points.length - 1] : null;
+  return `
+    <div class="kpi-panel-body">
+      <div class="kpi-title">${escapeHtml(label || profile?.display_name || entry?.label || "KPI")}</div>
+      <div class="kpi-value">${lastPoint ? formatNumber(lastPoint.v, 2) : "-"}</div>
+      <div class="profile-grid">
+        <div><strong>Min</strong><div>${formatNumber(profile?.min_value)}</div></div>
+        <div><strong>Max</strong><div>${formatNumber(profile?.max_value)}</div></div>
+        <div><strong>Average</strong><div>${formatNumber(profile?.avg_value)}</div></div>
+        <div><strong>Sample Count</strong><div>${profile?.sample_count ?? "-"}</div></div>
+        <div><strong>Last Seen</strong><div>${formatTimestamp(profile?.last_seen_utc)}</div></div>
+        <div><strong>Latest Bucket</strong><div>${formatTimestamp(lastPoint?.t)}</div></div>
+      </div>
     </div>
   `;
 }
@@ -1802,6 +2471,15 @@ function renderTagProfilePanel(panel, mount) {
     return;
   }
   body.innerHTML = renderTagProfilePanelContent(profile);
+}
+
+function renderKpiPanel(panel, mount) {
+  const body = mount.querySelector(".dashboard-panel-body");
+  body.innerHTML = renderKpiPanelContent(
+    panel.data?.profile || null,
+    panel.data?.response || null,
+    panel.settings?.label || panel.title,
+  );
 }
 
 async function refreshPanel(panelId) {

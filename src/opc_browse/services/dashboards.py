@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 
-ALLOWED_PANEL_TYPES = {"timeseries", "relationship_results", "tag_profile"}
+ALLOWED_PANEL_TYPES = {"timeseries", "relationship_results", "tag_profile", "kpi"}
 
 
 def sanitize_dashboard_id(value: str) -> str:
@@ -164,6 +164,9 @@ def validate_dashboard_payload(payload) -> dict:
         elif panel_type == "tag_profile":
             if "machine_id" not in settings or "tag_id" not in settings:
                 raise ValueError("Tag profile panels require machine_id and tag_id in settings")
+        elif panel_type == "kpi":
+            if "machine_id" not in settings or "tag_id" not in settings:
+                raise ValueError("KPI panels require machine_id and tag_id in settings")
 
         validated_panels.append(
             {

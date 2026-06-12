@@ -380,7 +380,7 @@
           <div class="panel-header">
             <div>
               <h2>Dashboards</h2>
-              <p class="subtle">Dashboards are optional saved views. Use Explore first, then save useful charts or relationship results here.</p>
+              <p class="subtle">Dashboards are saved reusable views. You can still add charts from Explore, or build panels directly here.</p>
             </div>
             <span id="dashboard-loading" class="loading-text hidden">Loading...</span>
           </div>
@@ -416,7 +416,6 @@
             <div class="dashboard-block">
               <span class="field-label">Panel actions</span>
               <div class="dashboard-inline">
-                <button id="add-profile-panel-btn" class="mini-btn">Add Target Tag Profile</button>
                 <button id="refresh-all-panels-btn" class="mini-btn">Refresh All Panels</button>
               </div>
               <div id="refresh-all-status" class="subtle">Panels refresh manually.</div>
@@ -424,10 +423,157 @@
           </div>
         </section>
 
-        <div id="dashboard-empty" class="panel dashboard-empty-state">
-          Dashboards are optional. Add charts or relationship results from Explore when you want to save a view.
-        </div>
-        <div id="dashboard-panel-grid" class="dashboard-panel-grid"></div>
+        <section class="dashboard-workspace">
+          <aside class="panel dashboard-builder-panel">
+            <section class="panel-section">
+              <div class="panel-header">
+                <div>
+                  <h2>Dashboard Builder</h2>
+                  <p class="subtle">Create trend, bar, KPI, profile, or relationship panels directly in Dashboards.</p>
+                </div>
+              </div>
+              <label class="field">
+                <span>Panel type</span>
+                <select id="builder-panel-type">
+                  <option value="line_trend">Line trend</option>
+                  <option value="bar_chart">Bar chart</option>
+                  <option value="kpi">KPI card</option>
+                  <option value="tag_profile">Tag profile</option>
+                  <option value="relationship_results">Relationship results</option>
+                </select>
+              </label>
+            </section>
+
+            <section class="panel-section grow-section">
+              <div class="panel-header">
+                <div>
+                  <h3>Data source</h3>
+                  <p class="subtle">Choose a machine, search tags, and select the tags for this panel.</p>
+                </div>
+                <span id="builder-tag-loading" class="loading-text hidden">Loading...</span>
+              </div>
+              <label class="field">
+                <span>Machine</span>
+                <select id="builder-machine-select">
+                  <option value="">Select a machine</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Tag search</span>
+                <input id="builder-tag-search" type="text" placeholder="Search display_name, opc_path, tag_id">
+              </label>
+              <div class="inline-controls">
+                <label class="checkbox-row">
+                  <input id="builder-use-scored-profiles" type="checkbox" checked>
+                  <span>Use scored profiles</span>
+                </label>
+                <button id="builder-refresh-tags-btn" class="primary-btn secondary-tone">Refresh Tags</button>
+              </div>
+              <div id="builder-tag-list" class="tag-list dashboard-builder-tag-list"></div>
+              <div class="selected-series builder-selected-tags">
+                <h3>Selected tags</h3>
+                <ul id="builder-selected-tags-list"><li>No tags selected.</li></ul>
+              </div>
+            </section>
+
+            <section class="panel-section">
+              <div class="panel-header">
+                <div>
+                  <h3>Time / aggregation</h3>
+                  <p class="subtle">Use these settings for trend, bar, KPI, and relationship panels.</p>
+                </div>
+              </div>
+              <div class="control-grid advanced-control-grid">
+                <label class="field">
+                  <span>Start UTC</span>
+                  <input id="builder-start-utc" type="text" placeholder="2026-06-11T00:00:00Z">
+                </label>
+                <label class="field">
+                  <span>End UTC</span>
+                  <input id="builder-end-utc" type="text" placeholder="2026-06-12T00:00:00Z">
+                </label>
+                <label class="field">
+                  <span>Bucket seconds</span>
+                  <input id="builder-bucket-seconds" type="number" min="1" value="60">
+                </label>
+                <label class="field">
+                  <span>Aggregation</span>
+                  <select id="builder-aggregation">
+                    <option value="avg">avg</option>
+                    <option value="min">min</option>
+                    <option value="max">max</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Chart mode</span>
+                  <select id="builder-chart-mode">
+                    <option value="raw">raw</option>
+                    <option value="normalized">normalized</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section class="panel-section">
+              <div class="panel-header">
+                <div>
+                  <h3>Panel settings</h3>
+                  <p class="subtle">Preview the panel, then add it or update the panel you are editing.</p>
+                </div>
+              </div>
+              <div class="control-grid advanced-control-grid">
+                <label class="field">
+                  <span>Panel title</span>
+                  <input id="builder-panel-title" type="text" placeholder="Vacuum and Speed">
+                </label>
+                <label class="field">
+                  <span>Width</span>
+                  <select id="builder-panel-width">
+                    <option value="4">4</option>
+                    <option value="6" selected>6</option>
+                    <option value="8">8</option>
+                    <option value="12">12</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Height</span>
+                  <select id="builder-panel-height">
+                    <option value="3">3</option>
+                    <option value="4" selected>4</option>
+                    <option value="6">6</option>
+                    <option value="8">8</option>
+                  </select>
+                </label>
+              </div>
+              <div class="button-row">
+                <button id="builder-preview-btn" class="mini-btn">Preview</button>
+                <button id="builder-add-panel-btn" class="primary-btn">Add Panel</button>
+                <button id="builder-update-panel-btn" class="mini-btn hidden">Update Selected Panel</button>
+                <button id="builder-cancel-edit-btn" class="mini-btn secondary-tone hidden">Cancel Edit</button>
+              </div>
+              <div id="builder-edit-status" class="subtle">Create a panel from the builder on the left.</div>
+            </section>
+
+            <section class="panel-section grow-section">
+              <div class="panel-header">
+                <div>
+                  <h3>Preview</h3>
+                  <p class="subtle">Use Preview to fetch data and confirm the panel before saving it.</p>
+                </div>
+              </div>
+              <div id="dashboard-builder-preview" class="dashboard-builder-preview empty-state">
+                Select a panel type, machine, and tags, then click Preview.
+              </div>
+            </section>
+          </aside>
+
+          <section class="dashboard-canvas-column">
+            <div id="dashboard-empty" class="panel dashboard-empty-state">
+              Create a panel from the builder on the left.
+            </div>
+            <div id="dashboard-panel-grid" class="dashboard-panel-grid"></div>
+          </section>
+        </section>
       </section>
     </main>
   </div>
