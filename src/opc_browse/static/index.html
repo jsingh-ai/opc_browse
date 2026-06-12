@@ -7,30 +7,51 @@
   <link rel="stylesheet" href="/static/css/explorer.css">
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
-      <div>
+  <div id="app-root" class="app-shell">
+    <header class="app-header topbar">
+      <div class="header-copy">
         <h1>OPC Browse Data Explorer</h1>
         <p class="subtle">Explore live OPC tag data, capture reusable panels, and save dashboard layouts as JSON.</p>
       </div>
-      <div class="topbar-actions">
+      <div class="topbar-actions header-status-area">
         <div class="status-group">
           <span class="status-label">API Status</span>
           <span id="health-status" class="status-pill pending">Checking...</span>
         </div>
+        <div class="status-group">
+          <span class="status-label">Active Machine</span>
+          <span id="active-machine-label" class="status-pill pending">No machine selected</span>
+        </div>
+        <span id="dashboard-dirty-indicator" class="dirty-indicator hidden">Unsaved changes</span>
         <button id="reset-workspace-btn" class="primary-btn secondary-tone">Reset Workspace</button>
       </div>
     </header>
 
-    <div id="error-box" class="error-box hidden">
-      <div id="error-message"></div>
-      <button id="dismiss-error-btn" class="mini-btn">Dismiss</button>
-    </div>
+    <section id="global-status-area" class="global-status-bar">
+      <div id="global-status" class="status-banner info">UI ready.</div>
+    </section>
 
-    <section class="panel dashboard-bar">
+    <section id="error-box" class="error-box hidden" role="alert">
+      <div>
+        <strong id="error-title">Request Error</strong>
+        <div id="error-message"></div>
+        <pre id="error-details" class="error-details hidden"></pre>
+      </div>
+      <button id="dismiss-error-btn" class="mini-btn">Dismiss</button>
+    </section>
+
+    <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+    <nav class="tab-row main-tab-nav" aria-label="Main sections">
+      <button id="tab-explore" class="tab-btn active" data-tab="explore">Explore</button>
+      <button id="tab-dashboards" class="tab-btn" data-tab="dashboards">Dashboards</button>
+    </nav>
+
+    <main class="main-content">
+    <section class="panel dashboard-bar panel-card panel-toolbar">
       <div class="dashboard-bar-grid">
         <div class="dashboard-block">
-          <div class="section-head compact-head">
+          <div class="section-head compact-head panel-header">
             <h2>Saved Dashboards</h2>
             <span id="dashboard-loading" class="loading-text hidden">Loading...</span>
           </div>
@@ -44,7 +65,6 @@
           </div>
           <div class="dashboard-status-row">
             <span id="dashboard-status" class="subtle">Start with Explore, then add panels and save a dashboard.</span>
-            <span id="dashboard-dirty-indicator" class="dirty-indicator hidden">Unsaved changes</span>
           </div>
         </div>
         <div class="dashboard-block">
@@ -72,16 +92,11 @@
       </div>
     </section>
 
-    <div class="tab-row">
-      <button id="tab-explore" class="tab-btn active" data-tab="explore">Explore</button>
-      <button id="tab-dashboards" class="tab-btn" data-tab="dashboards">Dashboards</button>
-    </div>
-
-    <section id="explore-view" class="tab-view active">
+    <section id="explore-view" class="tab-view active tab-section">
       <main class="layout-grid">
-        <aside class="panel sidebar-panel">
-          <section class="panel-section">
-            <div class="section-head compact-head">
+        <aside id="machine-browser-panel" class="panel sidebar-panel panel-card section-panel">
+          <section class="panel-section panel-body">
+            <div class="section-head compact-head panel-header">
               <h2>Machines</h2>
               <span id="machine-loading" class="loading-text hidden">Loading...</span>
             </div>
@@ -93,8 +108,8 @@
             </label>
           </section>
 
-          <section class="panel-section grow-section">
-            <div class="section-head compact-head">
+          <section class="panel-section grow-section panel-body">
+            <div class="section-head compact-head panel-header">
               <h2>Tags</h2>
               <span id="tag-loading" class="loading-text hidden">Loading...</span>
             </div>
@@ -107,29 +122,49 @@
                 <input id="numeric-only" type="checkbox" checked>
                 <span>Numeric only</span>
               </label>
+              <label class="checkbox-row">
+                <input id="use-scored-profiles" type="checkbox">
+                <span>Use scored profiles</span>
+              </label>
               <button id="refresh-tags-btn" class="primary-btn secondary-tone">Refresh Tags</button>
             </div>
+            <label class="field">
+              <span>Tag Sort</span>
+              <select id="tag-sort">
+                <option value="score_desc">usefulness score</option>
+                <option value="last_seen_desc">last seen</option>
+                <option value="sample_count_desc">sample count</option>
+                <option value="display_name_asc">display name</option>
+              </select>
+            </label>
             <div class="filter-cluster">
               <span class="filter-label">Quick Filters</span>
               <div class="filter-row" id="tag-filter-row">
                 <button class="filter-chip active" data-tag-filter="all_numeric">All numeric</button>
-                <button class="filter-chip" data-tag-filter="recently_active">Recently active</button>
-                <button class="filter-chip" data-tag-filter="high_sample">High sample count</button>
+                <button class="filter-chip" data-tag-filter="useful_only">Useful only</button>
+                <button class="filter-chip" data-tag-filter="changing_numeric">Changing numeric</button>
+                <button class="filter-chip" data-tag-filter="counter_like">Counter-like</button>
+                <button class="filter-chip" data-tag-filter="state_like">State-like</button>
+                <button class="filter-chip" data-tag-filter="constants">Constants</button>
                 <button class="filter-chip" data-tag-filter="stale">Stale</button>
+                <button class="filter-chip" data-tag-filter="low_sample">Low sample</button>
+                <button class="filter-chip" data-tag-filter="ignore">Ignore</button>
               </div>
             </div>
             <div id="tag-list" class="tag-list"></div>
           </section>
 
-          <section class="panel-section">
-            <h2>Selected Target</h2>
+          <section class="panel-section panel-body">
+            <div class="section-head compact-head panel-header">
+              <h2>Selected Target</h2>
+            </div>
             <div id="target-card" class="target-card empty-state">Select a numeric tag to begin.</div>
           </section>
         </aside>
 
-        <section class="panel center-panel">
-          <section class="panel-section">
-            <div class="section-head compact-head">
+        <section id="relationship-panel" class="panel center-panel panel-card section-panel">
+          <section class="panel-section panel-body">
+            <div class="section-head compact-head panel-header">
               <h2>Relationship Controls</h2>
               <span id="analysis-loading" class="loading-text hidden">Running...</span>
             </div>
@@ -175,8 +210,8 @@
             </div>
           </section>
 
-          <section class="panel-section">
-            <div class="section-head compact-head">
+          <section class="panel-section panel-body">
+            <div class="section-head compact-head panel-header">
               <h2>Diagnostics</h2>
               <span id="results-count" class="subtle">No results loaded.</span>
             </div>
@@ -202,8 +237,8 @@
             </div>
           </section>
 
-          <section class="panel-section grow-section">
-            <div class="section-head">
+          <section class="panel-section grow-section panel-body">
+            <div class="section-head panel-header">
               <h2>Relationship Results</h2>
               <div class="inline-tools">
                 <select id="results-sort">
@@ -251,9 +286,9 @@
           </section>
         </section>
 
-        <section class="panel chart-panel">
-          <section class="panel-section grow-section">
-            <div class="section-head compact-head">
+        <section id="chart-panel-card" class="panel chart-panel panel-card section-panel">
+          <section class="panel-section grow-section panel-body">
+            <div class="section-head compact-head panel-header">
               <h2>Chart Workspace</h2>
               <span id="chart-loading" class="loading-text hidden">Loading...</span>
             </div>
@@ -284,6 +319,7 @@
               <ul id="selected-series-list"><li>No series selected.</li></ul>
             </div>
             <div class="chart-wrap">
+              <div id="chart-empty-state" class="chart-empty-state">Plot target and selected related tags to render a chart.</div>
               <canvas id="trend-chart"></canvas>
             </div>
           </section>
@@ -291,12 +327,13 @@
       </main>
     </section>
 
-    <section id="dashboards-view" class="tab-view">
-      <div id="dashboard-empty" class="panel dashboard-empty-state">
+    <section id="dashboards-view" class="tab-view tab-section">
+      <div id="dashboard-empty" class="panel dashboard-empty-state panel-card">
         Create or load a dashboard, then add panels from Explore.
       </div>
       <div id="dashboard-panel-grid" class="dashboard-panel-grid"></div>
     </section>
+    </main>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

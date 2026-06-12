@@ -1,5 +1,19 @@
+// ============================================================================
+// Constants / State
+// ============================================================================
+
 const WORKSPACE_KEY = "opc_browse_workspace_v1";
-const TAG_FILTERS = ["all_numeric", "recently_active", "high_sample", "stale"];
+const TAG_FILTERS = [
+  "all_numeric",
+  "useful_only",
+  "changing_numeric",
+  "counter_like",
+  "state_like",
+  "constants",
+  "stale",
+  "low_sample",
+  "ignore",
+];
 const RELATIONSHIP_FILTERS = [
   "all",
   "moves_together",
@@ -17,6 +31,8 @@ const state = {
   filteredTags: [],
   folderCollapsed: {},
   activeTagFilter: "all_numeric",
+  useScoredProfiles: false,
+  tagSort: "score_desc",
   targetTag: null,
   lastAnalysisResponse: null,
   analysisResults: [],
@@ -41,15 +57,65 @@ const state = {
   },
 };
 
+// ============================================================================
+// DOM Helpers
+// ============================================================================
+
+function qs(selector, root = document) {
+  return root.querySelector(selector);
+}
+
+function qsa(selector, root = document) {
+  return Array.from(root.querySelectorAll(selector));
+}
+
+function setText(idOrElement, value) {
+  const element = typeof idOrElement === "string" ? document.getElementById(idOrElement) : idOrElement;
+  if (element) {
+    element.textContent = value ?? "";
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatUtc(value) {
+  return value || "-";
+}
+
+function createEmptyState(title, message) {
+  return `
+    <div class="empty-state">
+      <strong>${escapeHtml(title)}</strong>
+      <div>${escapeHtml(message)}</div>
+    </div>
+  `;
+}
+
+function createBadge(label, type = "") {
+  return `<span class="badge ${type}">${escapeHtml(label)}</span>`;
+}
+
 function generatePanelId() {
   return `panel_${Math.random().toString(36).slice(2, 10)}`;
 }
+
+// ============================================================================
+// Workspace Persistence
+// ============================================================================
 
 function persistWorkspace() {
   const payload = {
     machine_id: state.selectedMachineId,
     search_text: document.getElementById("tag-search").value,
     numeric_only: document.getElementById("numeric-only").checked,
+    use_scored_profiles: document.getElementById("use-scored-profiles").checked,
     target_tag: state.targetTag,
     start_utc: document.getElementById("start-utc").value,
     end_utc: document.getElementById("end-utc").value,
@@ -65,6 +131,7 @@ function persistWorkspace() {
     chart_mode: document.getElementById("chart-mode").value,
     chart_aggregation: document.getElementById("chart-aggregation").value,
     active_tag_filter: state.activeTagFilter,
+    tag_sort: state.tagSort,
   };
   localStorage.setItem(WORKSPACE_KEY, JSON.stringify(payload));
 }
@@ -96,6 +163,7 @@ function restoreWorkspaceControls(workspace) {
   }
   document.getElementById("tag-search").value = workspace.search_text || "";
   document.getElementById("numeric-only").checked = workspace.numeric_only !== false;
+  document.getElementById("use-scored-profiles").checked = workspace.use_scored_profiles === true;
   document.getElementById("start-utc").value = workspace.start_utc || "";
   document.getElementById("end-utc").value = workspace.end_utc || "";
   document.getElementById("bucket-seconds").value = workspace.bucket_seconds || 60;
@@ -109,6 +177,8 @@ function restoreWorkspaceControls(workspace) {
   state.activeTagFilter = TAG_FILTERS.includes(workspace.active_tag_filter)
     ? workspace.active_tag_filter
     : "all_numeric";
+  state.useScoredProfiles = workspace.use_scored_profiles === true;
+  state.tagSort = workspace.tag_sort || "score_desc";
   state.activeRelationshipFilter = RELATIONSHIP_FILTERS.includes(workspace.relationship_filter)
     ? workspace.relationship_filter
     : "all";
@@ -120,6 +190,10 @@ function restoreWorkspaceControls(workspace) {
     setDefaultUtcRange();
   }
 }
+
+// ============================================================================
+// API Helpers
+// ============================================================================
 
 async function apiGet(path) {
   const response = await fetch(path);
@@ -152,25 +226,58 @@ async function apiDelete(path) {
   return text ? JSON.parse(text) : null;
 }
 
-function showError(message) {
-  const box = document.getElementById("error-box");
-  const content = document.getElementById("error-message");
-  if (!message) {
-    box.classList.add("hidden");
-    content.textContent = "";
+// ============================================================================
+// Toast / Alert / Loading Helpers
+// ============================================================================
+
+function showToast(message, type = "info", timeoutMs = 4000) {
+  const container = document.getElementById("toast-container");
+  if (!container) {
     return;
   }
-  content.textContent = message;
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  window.setTimeout(() => {
+    toast.remove();
+  }, timeoutMs);
+}
+
+function clearError() {
+  const box = document.getElementById("error-box");
+  box.classList.add("hidden");
+  setText("error-message", "");
+  setText("error-details", "");
+  document.getElementById("error-details").classList.add("hidden");
+}
+
+function showError(message, details = null) {
+  const box = document.getElementById("error-box");
+  const detailBox = document.getElementById("error-details");
+  if (!message) {
+    clearError();
+    return;
+  }
+  setText("error-title", "Request Error");
+  setText("error-message", message);
+  if (details) {
+    setText(detailBox, details);
+    detailBox.classList.remove("hidden");
+  } else {
+    detailBox.classList.add("hidden");
+    setText(detailBox, "");
+  }
   box.classList.remove("hidden");
 }
 
-function setLoading(id, isLoading, text) {
-  const element = document.getElementById(id);
+function setGlobalStatus(message, type = "info") {
+  const element = document.getElementById("global-status");
   if (!element) {
     return;
   }
-  element.textContent = text || element.textContent;
-  element.classList.toggle("hidden", !isLoading);
+  element.className = `status-banner ${type}`;
+  element.textContent = message;
 }
 
 function disableButton(id, isDisabled) {
@@ -180,8 +287,50 @@ function disableButton(id, isDisabled) {
   }
 }
 
+function setSectionLoading(sectionName, isLoading, message = "") {
+  const sectionConfig = {
+    health: { loadingId: "health-status" },
+    machines: { loadingId: "machine-loading", panelId: "machine-browser-panel" },
+    tags: { loadingId: "tag-loading", panelId: "machine-browser-panel" },
+    analysis: { loadingId: "analysis-loading", panelId: "relationship-panel" },
+    chart: { loadingId: "chart-loading", panelId: "chart-panel-card" },
+    dashboards: { loadingId: "dashboard-loading", panelId: null },
+    saveDashboard: { loadingId: "dashboard-loading", panelId: null },
+    refreshAll: { loadingId: null, panelId: "dashboards-view" },
+  };
+  const config = sectionConfig[sectionName];
+  if (!config) {
+    return;
+  }
+  if (config.loadingId) {
+    const element = document.getElementById(config.loadingId);
+    if (element) {
+      if (message) {
+        element.textContent = message;
+      }
+      element.classList.toggle("hidden", !isLoading);
+    }
+  }
+  if (config.panelId) {
+    const panel = document.getElementById(config.panelId);
+    if (panel) {
+      panel.dataset.loading = isLoading ? "true" : "false";
+    }
+  }
+  state.loading[sectionName] = isLoading;
+}
+
+async function withLoading(sectionName, asyncFn, message = "") {
+  setSectionLoading(sectionName, true, message);
+  try {
+    return await asyncFn();
+  } finally {
+    setSectionLoading(sectionName, false);
+  }
+}
+
 function setDashboardStatus(message) {
-  document.getElementById("dashboard-status").textContent = message;
+  setText("dashboard-status", message);
 }
 
 function markDashboardDirty(isDirty = true) {
@@ -221,7 +370,7 @@ function formatNumber(value, digits = 3) {
 }
 
 function formatTimestamp(value) {
-  return value || "-";
+  return formatUtc(value);
 }
 
 function isStaleTag(tag) {
@@ -232,47 +381,86 @@ function isStaleTag(tag) {
   return Date.now() - lastSeen.getTime() > 24 * 60 * 60 * 1000;
 }
 
+function isLowSampleTag(tag) {
+  return Number(tag.sample_count || 0) < 30;
+}
+
+function getTagUsefulness(tag) {
+  return tag.usefulness_score || null;
+}
+
+function isChangingTag(tag) {
+  const usefulness = getTagUsefulness(tag);
+  if (usefulness?.semantic_type === "continuous_numeric") {
+    return true;
+  }
+  return Number(tag.distinct_numeric_count || 0) > 1 && usefulness?.semantic_type !== "constant";
+}
+
 async function loadHealth() {
   try {
+    setGlobalStatus("Checking API health...", "info");
     const payload = await apiGet("/health");
     const indicator = document.getElementById("health-status");
     indicator.textContent = payload.status === "ok" ? "OK" : "Unknown";
     indicator.className = "status-pill ok";
+    setGlobalStatus("API health check passed.", "success");
   } catch (error) {
     const indicator = document.getElementById("health-status");
     indicator.textContent = "Error";
     indicator.className = "status-pill error";
+    setGlobalStatus("API health check failed.", "danger");
     showError(`Health check failed: ${error.message}`);
   }
 }
 
 async function loadMachines() {
   const select = document.getElementById("machine-select");
-  setLoading("machine-loading", true, "Loading...");
-  try {
-    const machines = await apiGet("/api/machines");
-    state.machines = machines;
-    select.innerHTML = "";
-    if (!machines.length) {
-      select.innerHTML = '<option value="">No enabled machines found</option>';
-      return;
-    }
-    select.innerHTML = '<option value="">Select a machine</option>';
-    for (const machine of machines) {
-      const option = document.createElement("option");
-      option.value = String(machine.id);
-      option.textContent = `${machine.machine_name} (${machine.id})`;
-      if (state.selectedMachineId && Number(state.selectedMachineId) === machine.id) {
-        option.selected = true;
+  await withLoading("machines", async () => {
+    try {
+      const machines = await apiGet("/api/machines");
+      state.machines = machines;
+      select.innerHTML = "";
+      if (!machines.length) {
+        select.innerHTML = '<option value="">No enabled machines found</option>';
+        setGlobalStatus("No enabled machines returned by the API.", "warning");
+        return;
       }
-      select.appendChild(option);
+      select.innerHTML = '<option value="">Select a machine</option>';
+      for (const machine of machines) {
+        const option = document.createElement("option");
+        option.value = String(machine.id);
+        option.textContent = `${machine.machine_name} (${machine.id})`;
+        if (state.selectedMachineId && Number(state.selectedMachineId) === machine.id) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      }
+      setGlobalStatus(`Loaded ${machines.length} machine(s).`, "success");
+    } catch (error) {
+      showError(`Failed to load machines: ${error.message}`);
+      select.innerHTML = '<option value="">Failed to load machines</option>';
+      setGlobalStatus("Machine loading failed.", "danger");
     }
-  } catch (error) {
-    showError(`Failed to load machines: ${error.message}`);
-    select.innerHTML = '<option value="">Failed to load machines</option>';
-  } finally {
-    setLoading("machine-loading", false);
+  }, "Loading...");
+  updateActiveMachineLabel();
+}
+
+function updateActiveMachineLabel() {
+  const label = document.getElementById("active-machine-label");
+  if (!state.selectedMachineId) {
+    label.textContent = "No machine selected";
+    label.className = "status-pill pending";
+    return;
   }
+  const machine = state.machines.find((item) => Number(item.id) === Number(state.selectedMachineId));
+  if (!machine) {
+    label.textContent = `Machine ${state.selectedMachineId}`;
+    label.className = "status-pill";
+    return;
+  }
+  label.textContent = `${machine.machine_name} (${machine.id})`;
+  label.className = "status-pill ok";
 }
 
 function folderNameFromTag(tag) {
@@ -302,16 +490,53 @@ function getTagSearchValue() {
 }
 
 function matchesTagQuickFilter(tag) {
-  if (state.activeTagFilter === "recently_active") {
-    return !isStaleTag(tag);
+  const usefulness = getTagUsefulness(tag);
+  switch (state.activeTagFilter) {
+    case "useful_only":
+      return usefulness && ["high", "medium"].includes(usefulness.grade);
+    case "changing_numeric":
+      return isChangingTag(tag);
+    case "counter_like":
+      return usefulness?.semantic_type === "counter_like";
+    case "state_like":
+      return usefulness?.semantic_type === "state_like_numeric";
+    case "constants":
+      return usefulness?.semantic_type === "constant";
+    case "stale":
+      return isStaleTag(tag);
+    case "low_sample":
+      return isLowSampleTag(tag);
+    case "ignore":
+      return usefulness?.grade === "ignore";
+    case "all_numeric":
+    default:
+      return true;
   }
-  if (state.activeTagFilter === "high_sample") {
-    return Number(tag.sample_count || 0) >= 30;
-  }
-  if (state.activeTagFilter === "stale") {
-    return isStaleTag(tag);
-  }
-  return true;
+}
+
+function sortTags(tags) {
+  const sorted = [...tags];
+  sorted.sort((a, b) => {
+    if (state.tagSort === "last_seen_desc") {
+      return new Date(b.last_seen_utc || 0).getTime() - new Date(a.last_seen_utc || 0).getTime();
+    }
+    if (state.tagSort === "sample_count_desc") {
+      return Number(b.sample_count || 0) - Number(a.sample_count || 0);
+    }
+    if (state.tagSort === "display_name_asc") {
+      return (a.display_name || a.browse_name || a.opc_path || "").localeCompare(
+        b.display_name || b.browse_name || b.opc_path || "",
+      );
+    }
+    return (
+      Number(b.usefulness_score?.score || 0) - Number(a.usefulness_score?.score || 0)
+      || Number(b.sample_count || 0) - Number(a.sample_count || 0)
+      || (a.display_name || a.browse_name || a.opc_path || "").localeCompare(
+        b.display_name || b.browse_name || b.opc_path || "",
+      )
+    );
+  });
+  return sorted;
 }
 
 function filterTags() {
@@ -355,22 +580,23 @@ function renderTagList() {
   const container = document.getElementById("tag-list");
   container.innerHTML = "";
   if (!state.selectedMachineId) {
-    container.innerHTML = '<div class="empty-state">Select a machine to load tags.</div>';
+    container.innerHTML = createEmptyState("No machine selected", "Select a machine to load tags.");
     return;
   }
   const groupedTags = getGroupedTags();
   if (!groupedTags.length) {
-    container.innerHTML = '<div class="empty-state">No matching tags found.</div>';
+    container.innerHTML = createEmptyState("No tags found", "Adjust search, filters, or scored-profile mode.");
     return;
   }
   for (const [folder, tags] of groupedTags) {
+    const visibleTags = sortTags(tags);
     const group = document.createElement("div");
     group.className = "tag-group";
     const collapsed = !!state.folderCollapsed[folder];
     group.innerHTML = `
       <button class="tag-group-header" type="button">
         <span class="tag-group-title">${folder}</span>
-        <span class="tag-group-count">${tags.length} tag(s) ${collapsed ? "▸" : "▾"}</span>
+        <span class="tag-group-count">${visibleTags.length} tag(s) ${collapsed ? "▸" : "▾"}</span>
       </button>
       <div class="tag-group-body ${collapsed ? "hidden" : ""}"></div>
     `;
@@ -379,23 +605,40 @@ function renderTagList() {
       renderTagList();
     });
     const body = group.querySelector(".tag-group-body");
-    for (const tag of tags) {
+    for (const tag of visibleTags) {
+      const usefulness = getTagUsefulness(tag);
+      const reasonTitle = usefulness?.reasons?.join("; ") || "";
       const item = document.createElement("div");
       item.className = "tag-item";
       if (state.targetTag && state.targetTag.tag_id === tag.tag_id) {
         item.classList.add("selected");
       }
+      item.title = reasonTitle;
       item.innerHTML = `
         <div class="tag-item-head">
           <div class="tag-item-title">${tag.display_name || tag.browse_name || `Tag ${tag.tag_id}`}</div>
           <div class="badge-row">
             <span class="badge numeric">numeric</span>
-            ${isStaleTag(tag) ? '<span class="badge stale">stale</span>' : ""}
-            ${Number(tag.sample_count || 0) < 30 ? '<span class="badge low-sample">low-sample</span>' : ""}
+            ${isStaleTag(tag) ? createBadge("stale", "stale") : ""}
+            ${isLowSampleTag(tag) ? createBadge("low-sample", "low-sample") : ""}
+            ${usefulness ? createBadge(usefulness.grade, usefulness.grade) : ""}
           </div>
         </div>
+        ${
+          usefulness
+            ? `<div class="tag-score-row">
+                ${createBadge(usefulness.semantic_type, "semantic")}
+                ${createBadge(`${usefulness.score}/100`)}
+              </div>`
+            : ""
+        }
         <div class="tag-item-meta">Tag ID: ${tag.tag_id} | Type: ${tag.data_type || "-"}</div>
         <div class="tag-item-meta">Samples: ${tag.sample_count ?? "-"} | Last Seen: ${tag.last_seen_utc || "-"}</div>
+        ${
+          usefulness
+            ? `<div class="tag-item-meta">Min/Max: ${formatNumber(tag.min_value)} / ${formatNumber(tag.max_value)}</div>`
+            : ""
+        }
         <div class="tag-item-meta">${tag.opc_path || "-"}</div>
       `;
       item.addEventListener("click", () => setTargetTag(tag));
@@ -409,42 +652,56 @@ async function loadTags() {
   if (!state.selectedMachineId) {
     state.tags = [];
     renderTagList();
+    showError("Select a machine before loading tags.");
     return;
   }
   const numericOnly = document.getElementById("numeric-only").checked;
   const search = document.getElementById("tag-search").value.trim();
   const params = new URLSearchParams();
   params.set("numeric_only", String(numericOnly));
+  params.set("limit", "1000");
   if (search) {
     params.set("search", search);
   }
   disableButton("refresh-tags-btn", true);
-  setLoading("tag-loading", true, "Loading...");
-  try {
-    const tree = await apiGet(`/api/machines/${state.selectedMachineId}/tags/tree?${params.toString()}`);
-    state.tags = flattenTagTree(tree).sort((a, b) => {
-      const folderCompare = (a.folder_name || "").localeCompare(b.folder_name || "");
-      if (folderCompare !== 0) {
-        return folderCompare;
+  await withLoading("tags", async () => {
+    try {
+      if (state.useScoredProfiles) {
+        const response = await apiGet(
+          `/api/machines/${state.selectedMachineId}/tags/profiles?${params.toString()}`
+        );
+        state.tags = (response.profiles || []).map((tag) => ({
+          ...tag,
+          is_numeric: Number(tag.numeric_sample_count || 0) > 0,
+          folder_name: folderNameFromTag(tag),
+        }));
+      } else {
+        const tree = await apiGet(`/api/machines/${state.selectedMachineId}/tags/tree?${params.toString()}`);
+        state.tags = flattenTagTree(tree).sort((a, b) => {
+          const folderCompare = (a.folder_name || "").localeCompare(b.folder_name || "");
+          if (folderCompare !== 0) {
+            return folderCompare;
+          }
+          return (a.display_name || a.browse_name || a.opc_path || "").localeCompare(
+            b.display_name || b.browse_name || b.opc_path || "",
+          );
+        });
       }
-      return (a.display_name || a.browse_name || a.opc_path || "").localeCompare(
-        b.display_name || b.browse_name || b.opc_path || "",
-      );
-    });
-    if (state.targetTag) {
-      state.targetTag = state.tags.find((tag) => tag.tag_id === state.targetTag.tag_id) || null;
+      if (state.targetTag) {
+        state.targetTag = state.tags.find((tag) => tag.tag_id === state.targetTag.tag_id) || null;
+      }
+      renderTagList();
+      renderTargetTag();
+      persistWorkspace();
+      setGlobalStatus(`Loaded ${state.tags.length} tag(s).`, "success");
+    } catch (error) {
+      state.tags = [];
+      renderTagList();
+      showError(`Failed to load tags: ${error.message}`);
+      setGlobalStatus("Tag loading failed.", "danger");
     }
-    renderTagList();
-    renderTargetTag();
-    persistWorkspace();
-  } catch (error) {
-    state.tags = [];
-    renderTagList();
-    showError(`Failed to load tags: ${error.message}`);
-  } finally {
-    disableButton("refresh-tags-btn", false);
-    setLoading("tag-loading", false);
-  }
+  }, "Loading...");
+  disableButton("refresh-tags-btn", false);
 }
 
 function setTargetTag(tag) {
@@ -457,6 +714,8 @@ function setTargetTag(tag) {
   renderAnalysisSummary(null);
   renderRelationshipResults();
   renderSelectedSeriesList();
+  clearError();
+  setGlobalStatus(`Target selected: ${tag.display_name || tag.browse_name || tag.opc_path || `Tag ${tag.tag_id}`}.`, "info");
   persistWorkspace();
 }
 
@@ -468,6 +727,7 @@ function renderTargetTag() {
     return;
   }
   card.className = "target-card";
+  const usefulness = getTagUsefulness(state.targetTag);
   card.innerHTML = `
     <strong>${state.targetTag.display_name || state.targetTag.browse_name || `Tag ${state.targetTag.tag_id}`}</strong>
     <div class="tag-item-meta">Tag ID: ${state.targetTag.tag_id}</div>
@@ -475,6 +735,11 @@ function renderTargetTag() {
     <div class="tag-item-meta">Type: ${state.targetTag.data_type || "-"}</div>
     <div class="tag-item-meta">Samples: ${state.targetTag.sample_count ?? "-"}</div>
     <div class="tag-item-meta">Last Seen: ${state.targetTag.last_seen_utc || "-"}</div>
+    ${
+      usefulness
+        ? `<div class="tag-item-meta">Usefulness: ${usefulness.score}/100 (${usefulness.grade}, ${usefulness.semantic_type})</div>`
+        : ""
+    }
   `;
 }
 
@@ -482,15 +747,31 @@ function getAnalysisPayload() {
   if (!state.selectedMachineId || !state.targetTag) {
     throw new Error("Select a machine and target tag first.");
   }
+  const startUtc = document.getElementById("start-utc").value.trim();
+  const endUtc = document.getElementById("end-utc").value.trim();
+  const bucketSeconds = Number(document.getElementById("bucket-seconds").value);
+  const maxResults = Number(document.getElementById("max-results").value);
+  if (!startUtc || !endUtc) {
+    throw new Error("Start UTC and End UTC are required.");
+  }
+  if (new Date(startUtc).getTime() >= new Date(endUtc).getTime()) {
+    throw new Error("Start UTC must be earlier than End UTC.");
+  }
+  if (bucketSeconds < 1) {
+    throw new Error("Bucket seconds must be at least 1.");
+  }
+  if (maxResults < 1) {
+    throw new Error("Max results must be positive.");
+  }
   return {
     target: {
       machine_id: Number(state.selectedMachineId),
       tag_id: state.targetTag.tag_id,
       label: state.targetTag.display_name || state.targetTag.browse_name || state.targetTag.opc_path,
     },
-    start_utc: document.getElementById("start-utc").value.trim(),
-    end_utc: document.getElementById("end-utc").value.trim(),
-    bucket_seconds: Number(document.getElementById("bucket-seconds").value),
+    start_utc: startUtc,
+    end_utc: endUtc,
+    bucket_seconds: bucketSeconds,
     max_points_per_series: 2000,
     candidate_scope: document.getElementById("candidate-scope").value,
     candidate_tag_ids: null,
@@ -502,7 +783,7 @@ function getAnalysisPayload() {
 }
 
 async function runRelationshipAnalysis() {
-  showError("");
+  clearError();
   let payload;
   try {
     payload = getAnalysisPayload();
@@ -511,32 +792,34 @@ async function runRelationshipAnalysis() {
     return;
   }
   disableButton("run-analysis-btn", true);
-  setLoading("analysis-loading", true, "Running...");
-  try {
-    const response = await apiPost("/api/analysis/relationships", payload);
-    state.lastAnalysisResponse = response;
-    state.analysisResults = response.results || [];
-    const keptSelections = new Set();
-    for (const result of state.analysisResults) {
-      if (state.selectedResultTagIds.has(result.tag_id)) {
-        keptSelections.add(result.tag_id);
+  await withLoading("analysis", async () => {
+    try {
+      const response = await apiPost("/api/analysis/relationships", payload);
+      state.lastAnalysisResponse = response;
+      state.analysisResults = response.results || [];
+      const keptSelections = new Set();
+      for (const result of state.analysisResults) {
+        if (state.selectedResultTagIds.has(result.tag_id)) {
+          keptSelections.add(result.tag_id);
+        }
       }
+      state.selectedResultTagIds = keptSelections;
+      renderAnalysisSummary(response);
+      renderRelationshipResults();
+      renderSelectedSeriesList();
+      persistWorkspace();
+      showToast("Relationship analysis completed.", "success");
+      setGlobalStatus(`Analysis completed with ${state.analysisResults.length} result(s).`, "success");
+    } catch (error) {
+      state.analysisResults = [];
+      state.lastAnalysisResponse = null;
+      renderAnalysisSummary(null);
+      renderRelationshipResults();
+      showError(`Relationship analysis failed: ${error.message}`);
+      setGlobalStatus("Relationship analysis failed.", "danger");
     }
-    state.selectedResultTagIds = keptSelections;
-    renderAnalysisSummary(response);
-    renderRelationshipResults();
-    renderSelectedSeriesList();
-    persistWorkspace();
-  } catch (error) {
-    state.analysisResults = [];
-    state.lastAnalysisResponse = null;
-    renderAnalysisSummary(null);
-    renderRelationshipResults();
-    showError(`Relationship analysis failed: ${error.message}`);
-  } finally {
-    disableButton("run-analysis-btn", false);
-    setLoading("analysis-loading", false);
-  }
+  }, "Running...");
+  disableButton("run-analysis-btn", false);
 }
 
 function renderAnalysisSummary(response) {
@@ -806,7 +1089,7 @@ function createChart(canvas, series, chartMode) {
 }
 
 async function plotSelectedSeries() {
-  showError("");
+  clearError();
   if (!state.targetTag) {
     showError("Select a target tag before plotting.");
     return;
@@ -839,20 +1122,22 @@ async function plotSelectedSeries() {
 
   disableButton("plot-selected-btn", true);
   disableButton("clear-chart-btn", true);
-  setLoading("chart-loading", true, "Loading...");
-  try {
-    const response = await apiPost("/api/timeseries/query", requestPayload);
-    state.lastTimeseriesRequest = requestPayload;
-    state.lastTimeseriesResponse = response;
-    renderChart(response.series || []);
-    persistWorkspace();
-  } catch (error) {
-    showError(`Failed to load chart data: ${error.message}`);
-  } finally {
-    disableButton("plot-selected-btn", false);
-    disableButton("clear-chart-btn", false);
-    setLoading("chart-loading", false);
-  }
+  await withLoading("chart", async () => {
+    try {
+      const response = await apiPost("/api/timeseries/query", requestPayload);
+      state.lastTimeseriesRequest = requestPayload;
+      state.lastTimeseriesResponse = response;
+      renderChart(response.series || []);
+      persistWorkspace();
+      showToast("Chart plotted.", "success");
+      setGlobalStatus(`Chart updated with ${response.series?.length || 0} series.`, "success");
+    } catch (error) {
+      showError(`Failed to load chart data: ${error.message}`);
+      setGlobalStatus("Chart request failed.", "danger");
+    }
+  }, "Loading...");
+  disableButton("plot-selected-btn", false);
+  disableButton("clear-chart-btn", false);
 }
 
 function renderChart(series) {
@@ -862,6 +1147,7 @@ function renderChart(series) {
   if (state.chart) {
     state.chart.destroy();
   }
+  document.getElementById("chart-empty-state").classList.toggle("hidden", !!series.length);
   if (series.length > 8) {
     chartWarning.textContent = "Plotting more than 8 series may be hard to read.";
     chartWarning.classList.remove("hidden");
@@ -877,6 +1163,7 @@ function clearChart() {
     state.chart.destroy();
     state.chart = null;
   }
+  document.getElementById("chart-empty-state").classList.remove("hidden");
   document.getElementById("chart-warning").classList.add("hidden");
   document.getElementById("chart-warning").textContent = "";
 }
@@ -976,26 +1263,26 @@ function buildDashboardPayload() {
 }
 
 async function loadDashboards() {
-  setLoading("dashboard-loading", true, "Loading...");
-  try {
-    const response = await apiGet("/api/dashboards");
-    state.dashboards = response.dashboards || [];
-    const select = document.getElementById("dashboard-select");
-    select.innerHTML = '<option value="">No dashboard selected</option>';
-    for (const dashboard of state.dashboards) {
-      const option = document.createElement("option");
-      option.value = dashboard.id;
-      option.textContent = `${dashboard.name} (${dashboard.panel_count})`;
-      if (state.currentDashboard?.id === dashboard.id) {
-        option.selected = true;
+  await withLoading("dashboards", async () => {
+    try {
+      const response = await apiGet("/api/dashboards");
+      state.dashboards = response.dashboards || [];
+      const select = document.getElementById("dashboard-select");
+      select.innerHTML = '<option value="">No dashboard selected</option>';
+      for (const dashboard of state.dashboards) {
+        const option = document.createElement("option");
+        option.value = dashboard.id;
+        option.textContent = `${dashboard.name} (${dashboard.panel_count})`;
+        if (state.currentDashboard?.id === dashboard.id) {
+          option.selected = true;
+        }
+        select.appendChild(option);
       }
-      select.appendChild(option);
+      setGlobalStatus(`Loaded ${state.dashboards.length} dashboard definition(s).`, "info");
+    } catch (error) {
+      showError(`Failed to load dashboards: ${error.message}`);
     }
-  } catch (error) {
-    showError(`Failed to load dashboards: ${error.message}`);
-  } finally {
-    setLoading("dashboard-loading", false);
-  }
+  }, "Loading...");
 }
 
 async function loadDashboardById(dashboardId) {
@@ -1027,14 +1314,18 @@ async function saveCurrentDashboard() {
       return;
     }
     disableButton("save-dashboard-btn", true);
-    const saved = await apiPost("/api/dashboards", payload);
-    state.currentDashboard = normalizeDashboardPayload(saved);
-    syncDashboardInputs();
-    await loadDashboards();
-    document.getElementById("dashboard-select").value = saved.id;
-    renderDashboardGrid();
-    markDashboardDirty(false);
-    setDashboardStatus(`Saved dashboard ${saved.name}.`);
+    await withLoading("saveDashboard", async () => {
+      const saved = await apiPost("/api/dashboards", payload);
+      state.currentDashboard = normalizeDashboardPayload(saved);
+      syncDashboardInputs();
+      await loadDashboards();
+      document.getElementById("dashboard-select").value = saved.id;
+      renderDashboardGrid();
+      markDashboardDirty(false);
+      setDashboardStatus(`Saved dashboard ${saved.name}.`);
+      showToast("Dashboard saved.", "success");
+      setGlobalStatus(`Dashboard ${saved.name} saved.`, "success");
+    }, "Saving...");
   } catch (error) {
     showError(`Failed to save dashboard: ${error.message}`);
   } finally {
@@ -1057,6 +1348,8 @@ async function deleteCurrentDashboard() {
       await loadDashboards();
       markDashboardDirty(false);
       setDashboardStatus("Dashboard deleted.");
+      showToast("Dashboard deleted.", "warning");
+      setGlobalStatus("Dashboard deleted.", "warning");
     }
   } catch (error) {
     showError(`Failed to delete dashboard: ${error.message}`);
@@ -1083,6 +1376,7 @@ function addPanelToDashboard(panel) {
   dashboard.panels.sort((a, b) => (a.layout.y - b.layout.y) || (a.layout.x - b.layout.x));
   renderDashboardGrid();
   markDashboardDirty(true);
+  setGlobalStatus("Dashboard changed. Save to persist panel updates.", "warning");
 }
 
 function addCurrentChartPanel() {
@@ -1103,7 +1397,8 @@ function addCurrentChartPanel() {
     series: state.lastTimeseriesRequest.series,
     data: { response: state.lastTimeseriesResponse },
   });
-  setDashboardStatus("Added current chart as a panel. Save the dashboard to persist it.");
+    setDashboardStatus("Added current chart as a panel. Save the dashboard to persist it.");
+    showToast("Chart panel added to dashboard.", "success");
 }
 
 function addRelationshipResultsPanel() {
@@ -1119,6 +1414,7 @@ function addRelationshipResultsPanel() {
     data: { response: state.lastAnalysisResponse },
   });
   setDashboardStatus("Added relationship results panel. Save the dashboard to persist it.");
+  showToast("Relationship panel added to dashboard.", "success");
 }
 
 async function addTargetProfilePanel() {
@@ -1147,6 +1443,7 @@ async function addTargetProfilePanel() {
       data: { profile },
     });
     setDashboardStatus("Added tag profile panel. Save the dashboard to persist it.");
+    showToast("Profile panel added to dashboard.", "success");
   } catch (error) {
     showError(`Failed to load tag profile: ${error.message}`);
   }
@@ -1166,6 +1463,7 @@ function removeDashboardPanel(panelId) {
   renderDashboardGrid();
   markDashboardDirty(true);
   setDashboardStatus("Panel removed. Save the dashboard to persist the change.");
+  showToast("Panel removed.", "warning");
 }
 
 function updatePanelTitle(panelId) {
@@ -1309,6 +1607,7 @@ async function refreshPanel(panelId) {
     return;
   }
   try {
+    panel.data.error = null;
     if (panel.type === "timeseries") {
       panel.data.response = await apiPost(
         "/api/timeseries/query",
@@ -1337,8 +1636,12 @@ async function refreshPanel(panelId) {
     renderDashboardGrid();
     markDashboardDirty(true);
     setDashboardStatus(`Refreshed panel ${panel.title}.`);
+    showToast(`Panel refreshed: ${panel.title}`, "success");
   } catch (error) {
+    panel.data.error = error.message;
+    renderDashboardGrid();
     showError(`Failed to refresh panel: ${error.message}`);
+    showToast(`Panel refresh failed: ${panel.title}`, "danger");
   }
 }
 
@@ -1356,6 +1659,7 @@ async function refreshAllPanels() {
       await refreshPanel(panels[index].id);
     }
     document.getElementById("refresh-all-status").textContent = `Refreshed ${panels.length} panel(s).`;
+    showToast(`Refreshed ${panels.length} panel(s).`, "success");
   } finally {
     disableButton("refresh-all-panels-btn", false);
   }
@@ -1399,6 +1703,7 @@ async function renderDashboardPanel(panel, mount) {
       <div class="layout-readout">x=${panel.layout.x} y=${panel.layout.y} w=${panel.layout.w} h=${panel.layout.h}</div>
     </div>
     <div class="dashboard-refresh-note">Refresh mode: ${panel.refresh.mode} | Last refreshed: ${formatTimestamp(panel.refresh.last_refreshed_utc)}</div>
+    ${panel.data?.error ? `<div class="error-box"><div><strong>Panel refresh failed</strong><div>${escapeHtml(panel.data.error)}</div></div></div>` : ""}
     <div class="dashboard-panel-body"></div>
   `;
 
@@ -1468,6 +1773,7 @@ function resetWorkspace() {
   document.getElementById("machine-select").value = "";
   document.getElementById("tag-search").value = "";
   document.getElementById("numeric-only").checked = true;
+  document.getElementById("use-scored-profiles").checked = false;
   document.getElementById("bucket-seconds").value = 60;
   document.getElementById("candidate-scope").value = "same_machine";
   document.getElementById("max-candidate-tags").value = 300;
@@ -1477,6 +1783,9 @@ function resetWorkspace() {
   document.getElementById("chart-mode").value = "raw";
   document.getElementById("chart-aggregation").value = "avg";
   document.getElementById("results-sort").value = "score_desc";
+  document.getElementById("tag-sort").value = "score_desc";
+  state.useScoredProfiles = false;
+  state.tagSort = "score_desc";
   setDefaultUtcRange();
   renderTargetTag();
   renderTagList();
@@ -1486,12 +1795,16 @@ function resetWorkspace() {
   clearChart();
   applyFilterButtonState("tag-filter-row", state.activeTagFilter, "data-tag-filter");
   applyFilterButtonState("relationship-filter-row", state.activeRelationshipFilter, "data-relationship-filter");
+  updateActiveMachineLabel();
+  showToast("Workspace reset.", "info");
+  setGlobalStatus("Workspace reset.", "info");
 }
 
 function bindControlPersistence() {
   const ids = [
     "tag-search",
     "numeric-only",
+    "use-scored-profiles",
     "start-utc",
     "end-utc",
     "bucket-seconds",
@@ -1503,6 +1816,7 @@ function bindControlPersistence() {
     "chart-mode",
     "chart-aggregation",
     "results-sort",
+    "tag-sort",
   ];
   for (const id of ids) {
     const element = document.getElementById(id);
@@ -1523,6 +1837,7 @@ function bindEvents() {
     renderRelationshipResults();
     renderSelectedSeriesList();
     persistWorkspace();
+    updateActiveMachineLabel();
     await loadTags();
   });
 
@@ -1541,10 +1856,20 @@ function bindEvents() {
     persistWorkspace();
     await loadTags();
   });
+  document.getElementById("use-scored-profiles").addEventListener("change", async (event) => {
+    state.useScoredProfiles = event.target.checked;
+    persistWorkspace();
+    await loadTags();
+  });
+  document.getElementById("tag-sort").addEventListener("change", (event) => {
+    state.tagSort = event.target.value;
+    renderTagList();
+    persistWorkspace();
+  });
   document.getElementById("run-analysis-btn").addEventListener("click", runRelationshipAnalysis);
   document.getElementById("plot-selected-btn").addEventListener("click", plotSelectedSeries);
   document.getElementById("clear-chart-btn").addEventListener("click", clearChart);
-  document.getElementById("dismiss-error-btn").addEventListener("click", () => showError(""));
+  document.getElementById("dismiss-error-btn").addEventListener("click", () => clearError());
   document.getElementById("reset-workspace-btn").addEventListener("click", async () => {
     resetWorkspace();
     await loadMachines();
@@ -1609,6 +1934,10 @@ function syncDashboardInputs() {
   document.getElementById("dashboard-description").value = state.currentDashboard?.description || "";
 }
 
+// ============================================================================
+// Init / Bootstrap
+// ============================================================================
+
 async function init() {
   const workspace = loadWorkspace();
   restoreWorkspaceControls(workspace);
@@ -1617,12 +1946,14 @@ async function init() {
   applyFilterButtonState("tag-filter-row", state.activeTagFilter, "data-tag-filter");
   applyFilterButtonState("relationship-filter-row", state.activeRelationshipFilter, "data-relationship-filter");
   document.getElementById("results-sort").value = state.resultSort;
+  document.getElementById("tag-sort").value = state.tagSort;
   syncDashboardInputs();
   renderTargetTag();
   renderTagList();
   renderAnalysisSummary(null);
   renderRelationshipResults();
   renderSelectedSeriesList();
+  updateActiveMachineLabel();
   await renderDashboardGrid();
   await loadHealth();
   await Promise.all([loadMachines(), loadDashboards()]);

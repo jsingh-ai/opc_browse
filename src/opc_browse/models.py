@@ -137,6 +137,7 @@ class RelationshipRequest(BaseModel):
     max_results: int = Field(default=25, ge=1, le=100)
     min_pair_count: int = Field(default=30, ge=3)
     max_lag_seconds: int = Field(default=1800, ge=0, le=86400)
+    prefer_useful_candidates: bool = True
 
     @field_validator("end_utc")
     @classmethod
@@ -225,6 +226,53 @@ class RelationshipResponse(BaseModel):
     analysis: RelationshipAnalysisInfo
     results: list[RelationshipResult]
     skipped: list[RelationshipSkipped]
+
+
+class TagUsefulnessScore(BaseModel):
+    score: int = Field(ge=0, le=100)
+    grade: Literal["high", "medium", "low", "ignore"]
+    semantic_type: Literal[
+        "continuous_numeric",
+        "counter_like",
+        "state_like_numeric",
+        "constant",
+        "sparse",
+        "text_or_state",
+        "unknown",
+    ]
+    reasons: list[str] = Field(default_factory=list)
+    badges: list[str] = Field(default_factory=list)
+
+
+class TagProfileSummary(BaseModel):
+    machine_id: int
+    tag_id: int
+    opc_path: str | None = None
+    display_name: str | None = None
+    browse_name: str | None = None
+    data_type: str | None = None
+    parent_branch: str | None = None
+    sample_count: int
+    numeric_sample_count: int
+    text_sample_count: int
+    null_numeric_count: int
+    error_count: int
+    first_seen_utc: datetime | None = None
+    last_seen_utc: datetime | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    avg_value: float | None = None
+    stddev_value: float | None = None
+    distinct_numeric_count: int
+    quality_good_count: int = 0
+    quality_bad_count: int = 0
+    usefulness_score: TagUsefulnessScore
+
+
+class TagProfilesResponse(BaseModel):
+    machine_id: int
+    count: int
+    profiles: list[TagProfileSummary]
 
 
 class DashboardSummary(BaseModel):

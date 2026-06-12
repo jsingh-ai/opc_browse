@@ -186,6 +186,64 @@ Current limitations:
 - no authentication
 - no MySQL-backed dashboard storage
 
+## Phase 10 UI Foundation Cleanup
+
+Phase 10 does not add new analytics. It improves the frontend structure so the existing app is easier to visually test and debug.
+
+This phase adds:
+
+- cleaner app shell and section structure
+- reusable panel and card styling
+- toast notifications for common successful actions
+- stronger persistent error alerts
+- clearer inline and section loading states
+- better empty states across Explore and Dashboards
+- more readable diagnostics and visual organization
+
+Examples:
+
+- dashboard save/delete shows toast feedback
+- chart plotting and analysis completion show toast feedback
+- failed API requests remain visible in the persistent error area
+- static HTML now includes a dedicated toast container and clearer section wrappers
+
+## Phase 9 Tag Profiling And Smarter Discovery
+
+Phase 9 adds heuristic tag usefulness scoring so you can find better targets before running correlations.
+
+Backend additions:
+
+- scored machine tag profile listing
+- scored single-tag profile endpoint
+- semantic type inference
+- usefulness score, grade, reasons, and badges
+- CLI tag profiling report
+
+Semantic types:
+
+- `continuous_numeric`
+- `counter_like`
+- `state_like_numeric`
+- `constant`
+- `sparse`
+- `text_or_state`
+- `unknown`
+
+Frontend additions:
+
+- `Use scored profiles` toggle in the Explore tag browser
+- usefulness score sort
+- grade and semantic-type badges
+- filters for useful tags, changing tags, counters, state-like tags, constants, stale tags, low-sample tags, and ignore-grade tags
+
+CLI command:
+
+```bash
+python scripts/profile_machine_tags.py --machine-id 1 --numeric-only --limit 50
+```
+
+Scoring is heuristic and explainable. It is meant to help discovery, not to act as final truth.
+
 ## Relationship Analysis Notes
 
 Relationship types:
@@ -250,6 +308,8 @@ Implemented phases:
 - Phase 6: workspace persistence and explorer usability improvements
 - Phase 7: saved dashboards backed by JSON files
 - Phase 8: dashboard layout builder with panel lifecycle controls
+- Phase 9: tag profiling, usefulness scoring, and smarter tag discovery
+- Phase 10: frontend structure, CSS architecture, alerts, loading states, and visual cleanup
 
 Next likely step:
 
