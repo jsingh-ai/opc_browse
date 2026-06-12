@@ -24,20 +24,24 @@
   --color-info-soft: #dbeafe;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
   --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-7: 32px;
-  --font-sm: 0.82rem;
-  --font-md: 0.92rem;
-  --font-lg: 1rem;
-  --font-xl: 1.9rem;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 14px;
+  --space-lg: 18px;
+  --space-1: var(--space-xs);
+  --space-2: var(--space-sm);
+  --space-3: 10px;
+  --space-4: var(--space-md);
+  --space-5: var(--space-lg);
+  --space-6: 22px;
+  --space-7: 28px;
+  --font-sm: 0.78rem;
+  --font-md: 0.88rem;
+  --font-lg: 0.96rem;
+  --font-xl: 1.55rem;
 }
 
 /* ==========================================================================
@@ -99,7 +103,7 @@ pre {
 
 .app-shell {
   min-height: 100vh;
-  padding: var(--space-5);
+  padding: var(--space-4);
 }
 
 .main-content {
@@ -295,7 +299,7 @@ pre {
 }
 
 .panel-section {
-  padding: var(--space-5);
+  padding: var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -312,7 +316,7 @@ pre {
 
 .workflow-panel {
   margin-bottom: var(--space-4);
-  padding: var(--space-5);
+  padding: var(--space-4);
 }
 
 .workflow-steps {
@@ -393,7 +397,7 @@ pre {
 
 .field input,
 .field select {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border-strong);
   background: white;
@@ -420,7 +424,7 @@ pre {
 }
 
 .primary-btn {
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: var(--color-accent);
   color: white;
 }
@@ -432,7 +436,7 @@ pre {
 }
 
 .mini-btn {
-  padding: 8px 12px;
+  padding: 7px 10px;
 }
 
 .danger-tone {
@@ -445,7 +449,7 @@ pre {
 }
 
 .advanced-details {
-  margin: var(--space-4) 0;
+  margin: var(--space-3) 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-panel-muted);
@@ -469,7 +473,7 @@ pre {
 
 .error-box {
   margin-bottom: var(--space-4);
-  padding: var(--space-4);
+  padding: var(--space-3);
   border: 1px solid #efb7b7;
   border-radius: var(--radius-md);
   background: var(--color-danger-soft);
@@ -505,7 +509,7 @@ pre {
 }
 
 .toast {
-  padding: var(--space-3) var(--space-4);
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: white;
   border: 1px solid var(--color-border);
@@ -560,7 +564,7 @@ pre {
 }
 
 .dashboard-empty-state {
-  padding: var(--space-7);
+  padding: var(--space-6);
   text-align: center;
 }
 
@@ -568,8 +572,8 @@ pre {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 300px;
-  padding: var(--space-5);
+  min-height: 220px;
+  padding: var(--space-4);
   text-align: center;
   border: 1px dashed var(--color-border-strong);
   border-radius: var(--radius-md);
@@ -587,8 +591,8 @@ pre {
 .tag-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  max-height: 560px;
+  gap: 10px;
+  max-height: 500px;
   overflow: auto;
   padding-right: 4px;
 }
@@ -627,7 +631,7 @@ pre {
 }
 
 .tag-item {
-  padding: 12px;
+  padding: 10px 11px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: white;
@@ -638,6 +642,12 @@ pre {
 .tag-item.selected {
   border-color: #a9c7ff;
   background: #f8fbff;
+}
+
+.tag-item.selected-recommended {
+  border-color: #9ed8ae;
+  background: #f4fbf6;
+  box-shadow: inset 0 0 0 1px rgba(46, 125, 50, 0.08);
 }
 
 .tag-item-head {
@@ -666,8 +676,43 @@ pre {
   min-height: 92px;
   border: 1px dashed var(--color-border-strong);
   border-radius: var(--radius-md);
-  padding: 14px;
+  padding: 12px;
   background: var(--color-panel-muted);
+}
+
+.target-card.target-recommended {
+  border-style: solid;
+  border-color: #b8ebc8;
+  background: #f0fdf4;
+}
+
+.inline-help-note {
+  margin-bottom: var(--space-2);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: var(--font-md);
+}
+
+.inline-warning-box {
+  margin-bottom: var(--space-3);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid #f3df9b;
+  background: #fff8e7;
+  color: var(--color-warning);
+  font-size: var(--font-md);
+}
+
+.inline-warning-box ol {
+  margin: 8px 0 0 18px;
+  padding: 0;
+}
+
+.inline-warning-box li + li {
+  margin-top: 3px;
 }
 
 /* ==========================================================================
@@ -677,15 +722,15 @@ pre {
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
+  gap: 10px;
+  margin-bottom: var(--space-3);
 }
 
 .stat-card {
   background: var(--color-panel-muted);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: var(--space-3);
+  padding: 10px 12px;
 }
 
 .summary-label {
@@ -698,11 +743,11 @@ pre {
 .diagnostics-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-3);
+  gap: 10px;
 }
 
 .diagnostic-card {
-  padding: var(--space-4);
+  padding: 12px;
   background: var(--color-panel-muted);
 }
 
@@ -744,7 +789,7 @@ pre {
 .results-table td,
 .compact-results-table th,
 .compact-results-table td {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
   text-align: left;
   vertical-align: top;
@@ -799,17 +844,17 @@ pre {
 
 .chart-wrap,
 .dashboard-chart-wrap {
-  min-height: 420px;
+  min-height: 360px;
   background: white;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: var(--space-3);
+  padding: 10px;
 }
 
 .chart-wrap canvas,
 .dashboard-chart-wrap canvas {
   width: 100%;
-  height: 360px;
+  height: 320px;
 }
 
 .optional-save-panel {
@@ -899,7 +944,7 @@ pre {
 }
 
 .profile-grid div {
-  padding: var(--space-3);
+  padding: 10px;
   border-radius: var(--radius-sm);
   background: var(--color-panel-muted);
   border: 1px solid var(--color-border);

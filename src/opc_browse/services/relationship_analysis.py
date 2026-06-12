@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from opc_browse.models import RelationshipRequest
-from opc_browse.services.correlation import analyze_relationships
+from opc_browse.services.correlation import (
+    SKIP_REASON_TARGET_INSUFFICIENT_DATA,
+    analyze_relationships,
+    is_target_series_usable,
+)
 from opc_browse.services.diagnostics import summarize_skipped
 from opc_browse.services.relationship_queries import (
     fetch_bucketed_numeric_series,
@@ -33,6 +37,66 @@ def run_relationship_analysis(conn, payload: RelationshipRequest) -> dict[str, A
     )
     if not target_metadata:
         raise LookupError("Target tag not found")
+
+    series_rows = fetch_bucketed_numeric_series(
+        conn,
+        machine_id=payload.target.machine_id,
+        tag_ids=[payload.target.tag_id],
+        start_utc=start_utc,
+        end_utc=end_utc,
+        bucket_seconds=actual_bucket_seconds,
+    )
+
+    target_series: dict[int, float] = {}
+    for row in series_rows:
+        bucket_index = bucket_index_from_row(row["bucket_start_utc"], actual_bucket_seconds)
+        target_series[bucket_index] = float(row["avg_value"])
+    if not target_series:
+        raise LookupError("Target tag has no numeric samples in the requested window")
+
+    if not is_target_series_usable(target_series, payload.min_pair_count):
+        warnings: list[str] = []
+        if actual_bucket_seconds > payload.bucket_seconds:
+            warnings.append(
+                "actual bucket_seconds was increased from "
+                f"{payload.bucket_seconds} to {actual_bucket_seconds} "
+                "to respect max_points_per_series"
+            )
+        warnings.append(
+            "selected target did not have enough usable numeric data in this time range"
+        )
+        return {
+            "target": {
+                "machine_id": payload.target.machine_id,
+                "tag_id": payload.target.tag_id,
+                "label": payload.target.label
+                or target_metadata.get("display_name")
+                or target_metadata.get("browse_name")
+                or target_metadata.get("opc_path"),
+                "opc_path": target_metadata.get("opc_path"),
+                "display_name": target_metadata.get("display_name"),
+                "data_type": target_metadata.get("data_type"),
+            },
+            "window": {
+                "start_utc": to_iso_utc(payload.start_utc),
+                "end_utc": to_iso_utc(payload.end_utc),
+                "requested_bucket_seconds": payload.bucket_seconds,
+                "actual_bucket_seconds": actual_bucket_seconds,
+            },
+            "analysis": {
+                "method": "stats_v1",
+                "candidate_scope": payload.candidate_scope,
+                "candidate_count_scanned": 0,
+                "candidate_count_analyzed": 0,
+                "skipped_count": 1,
+                "skipped_by_reason": {SKIP_REASON_TARGET_INSUFFICIENT_DATA: 1},
+                "max_lag_seconds": payload.max_lag_seconds,
+                "min_pair_count": payload.min_pair_count,
+                "warnings": warnings,
+            },
+            "results": [],
+            "skipped": [{"tag_id": payload.target.tag_id, "reason": SKIP_REASON_TARGET_INSUFFICIENT_DATA}],
+        }
 
     candidate_fetch = fetch_candidate_numeric_tags(
         conn,
@@ -65,8 +129,6 @@ def run_relationship_analysis(conn, payload: RelationshipRequest) -> dict[str, A
         series_by_tag_id.setdefault(row["tag_id"], {})[bucket_index] = float(row["avg_value"])
 
     target_series = series_by_tag_id.get(payload.target.tag_id, {})
-    if not target_series:
-        raise LookupError("Target tag has no numeric samples in the requested window")
 
     metadata_by_tag_id = {}
     for row in candidate_rows:

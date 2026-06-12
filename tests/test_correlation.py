@@ -7,6 +7,7 @@ from opc_browse.services.correlation import (
     best_lagged_corr,
     classify_relationship,
     first_difference,
+    is_target_series_usable,
     pearson_corr,
 )
 
@@ -171,3 +172,9 @@ def test_analyze_relationships_marks_insufficient_overlap_consistently():
     )
     assert result["results"] == []
     assert result["skipped"][0]["reason"] == SKIP_REASON_CANDIDATE_INSUFFICIENT_OVERLAP
+
+
+def test_is_target_series_usable_rejects_short_or_constant_target():
+    assert is_target_series_usable({0: 1.0, 1: 2.0}, min_pair_count=3) is False
+    assert is_target_series_usable({0: 1.0, 1: 1.0, 2: 1.0}, min_pair_count=3) is False
+    assert is_target_series_usable({0: 1.0, 1: 2.0, 2: 3.0}, min_pair_count=3) is True

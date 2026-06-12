@@ -59,6 +59,19 @@ def _finite_count_and_std(values: list[Any]) -> tuple[int, float | None]:
     return int(len(finite)), float(np.std(finite))
 
 
+def is_target_series_usable(
+    target_series: dict[int, float],
+    min_pair_count: int,
+) -> bool:
+    target_values_only = list(target_series.values())
+    target_finite_count, target_stddev = _finite_count_and_std(target_values_only)
+    if target_finite_count < min_pair_count or target_stddev is None:
+        return False
+    if target_stddev <= VARIANCE_EPSILON:
+        return False
+    return True
+
+
 def pearson_corr(x: list[Any], y: list[Any], min_pair_count: int) -> float | None:
     corr, _ = _pearson_corr_with_count(x, y, min_pair_count)
     return corr
@@ -201,18 +214,7 @@ def analyze_relationships(
     results: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     max_lag_buckets = max_lag_seconds // bucket_seconds if bucket_seconds > 0 else 0
-    target_values_only = list(target_series.values())
-    target_finite_count, target_stddev = _finite_count_and_std(target_values_only)
-
-    if target_finite_count < min_pair_count or target_stddev is None:
-        for tag_id in candidate_series_by_tag_id:
-            skipped.append({"tag_id": tag_id, "reason": SKIP_REASON_TARGET_INSUFFICIENT_DATA})
-        return {
-            "results": [],
-            "skipped": skipped,
-            "analyzed_count": 0,
-        }
-    if target_stddev <= VARIANCE_EPSILON:
+    if not is_target_series_usable(target_series, min_pair_count):
         for tag_id in candidate_series_by_tag_id:
             skipped.append({"tag_id": tag_id, "reason": SKIP_REASON_TARGET_INSUFFICIENT_DATA})
         return {

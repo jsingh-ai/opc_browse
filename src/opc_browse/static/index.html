@@ -159,6 +159,9 @@
                   <button class="filter-chip" data-tag-filter="ignore">Ignore</button>
                 </div>
               </div>
+              <div class="inline-help-note">
+                Good targets are changing numeric tags with recent samples. Avoid constants, sparse tags, and text/state tags for relationship analysis.
+              </div>
               <div id="tag-list" class="tag-list"></div>
             </section>
 
@@ -237,6 +240,7 @@
                 </div>
                 <span id="results-count" class="subtle">No results loaded.</span>
               </div>
+              <div id="analysis-warning-box" class="inline-warning-box hidden"></div>
               <div class="summary-grid">
                 <div class="stat-card"><span class="summary-label">Candidates scanned</span><strong id="summary-scanned">-</strong></div>
                 <div class="stat-card"><span class="summary-label">Candidates analyzed</span><strong id="summary-analyzed">-</strong></div>

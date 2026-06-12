@@ -424,6 +424,60 @@ function getTagUsefulness(tag) {
   return tag.usefulness_score || null;
 }
 
+const SKIP_REASON_LABELS = {
+  target_insufficient_data: "Target has insufficient data",
+  candidate_insufficient_overlap: "Candidate has insufficient overlap",
+  constant_or_insufficient_variance: "Constant or not enough variation",
+  insufficient_pair_count: "Not enough matching time buckets",
+  non_numeric_or_missing_series: "Non-numeric or missing series",
+  analysis_error: "Analysis error",
+};
+
+function readableSkipReason(reason) {
+  return SKIP_REASON_LABELS[reason] || reason;
+}
+
+function getTargetPreflight(tag) {
+  if (!tag) {
+    return { blocked: false, weak: false, messages: [] };
+  }
+  const usefulness = getTagUsefulness(tag);
+  const minPairCount = Number(document.getElementById("min-pair-count")?.value || 30);
+  const messages = [];
+  let blocked = false;
+  let weak = false;
+
+  if (Number(tag.numeric_sample_count || 0) === 0 && usefulness?.semantic_type === "text_or_state") {
+    blocked = true;
+    messages.push(
+      "This selected target does not appear to have numeric data. Pick a numeric changing tag or disable scored profiles and inspect the tag."
+    );
+  }
+
+  if (usefulness) {
+    if (["constant", "sparse"].includes(usefulness.semantic_type) || usefulness.grade === "ignore") {
+      weak = true;
+    }
+    if (usefulness.badges?.includes("stale")) {
+      weak = true;
+      messages.push("This target appears stale in the current dataset.");
+    }
+  }
+
+  if (Number(tag.sample_count || 0) > 0 && Number(tag.sample_count || 0) < minPairCount) {
+    weak = true;
+  }
+  if (Number(tag.numeric_sample_count || 0) > 0 && Number(tag.numeric_sample_count || 0) < minPairCount) {
+    weak = true;
+  }
+
+  if (weak && !blocked) {
+    messages.push("This target may not have enough changing numeric data. Analysis may return no results.");
+  }
+
+  return { blocked, weak, messages };
+}
+
 function isChangingTag(tag) {
   const usefulness = getTagUsefulness(tag);
   if (usefulness?.semantic_type === "continuous_numeric") {
@@ -665,6 +719,9 @@ function renderTagList() {
       const reasonTitle = usefulness?.reasons?.join("; ") || "";
       const item = document.createElement("div");
       item.className = "tag-item";
+      if (usefulness?.grade && ["high", "medium"].includes(usefulness.grade) && usefulness.semantic_type === "continuous_numeric") {
+        item.classList.add("selected-recommended");
+      }
       if (state.targetTag && state.targetTag.tag_id === tag.tag_id) {
         item.classList.add("selected");
       }
@@ -791,16 +848,30 @@ function renderTargetTag() {
   }
   card.className = "target-card";
   const usefulness = getTagUsefulness(state.targetTag);
+  if (usefulness?.grade && ["high", "medium"].includes(usefulness.grade) && usefulness.semantic_type === "continuous_numeric") {
+    card.classList.add("target-recommended");
+  }
   card.innerHTML = `
     <strong>${state.targetTag.display_name || state.targetTag.browse_name || `Tag ${state.targetTag.tag_id}`}</strong>
     <div class="tag-item-meta">Tag ID: ${state.targetTag.tag_id}</div>
     <div class="tag-item-meta">Path: ${state.targetTag.opc_path || "-"}</div>
     <div class="tag-item-meta">Type: ${state.targetTag.data_type || "-"}</div>
     <div class="tag-item-meta">Samples: ${state.targetTag.sample_count ?? "-"}</div>
+    ${
+      state.targetTag.numeric_sample_count !== undefined
+        ? `<div class="tag-item-meta">Numeric samples: ${state.targetTag.numeric_sample_count ?? "-"}</div>`
+        : ""
+    }
     <div class="tag-item-meta">Last Seen: ${state.targetTag.last_seen_utc || "-"}</div>
     ${
       usefulness
-        ? `<div class="tag-item-meta">Usefulness: ${usefulness.score}/100 (${usefulness.grade}, ${usefulness.semantic_type})</div>`
+        ? `<div class="tag-item-meta">Usefulness: ${usefulness.score}/100 (${usefulness.grade}, ${usefulness.semantic_type})</div>
+           <div class="tag-score-row">
+             ${createBadge(usefulness.grade, usefulness.grade)}
+             ${createBadge(usefulness.semantic_type, "semantic")}
+             ${(usefulness.badges || []).slice(0, 4).map((badge) => createBadge(badge)).join("")}
+           </div>
+           <div class="tag-item-meta">${escapeHtml((usefulness.reasons || []).join(" | "))}</div>`
         : ""
     }
   `;
@@ -852,6 +923,21 @@ async function runRelationshipAnalysis() {
   clearError();
   let payload;
   try {
+    if (!state.selectedMachineId) {
+      throw new Error("Select a machine first.");
+    }
+    if (!state.targetTag) {
+      throw new Error("Select a target tag first.");
+    }
+    const preflight = getTargetPreflight(state.targetTag);
+    if (preflight.blocked) {
+      showError(preflight.messages[0]);
+      return;
+    }
+    if (preflight.weak) {
+      showToast("This target may not have enough changing numeric data. Analysis may return no results.", "warning");
+      setGlobalStatus("Target looks weak for relationship analysis. Consider choosing a better target or expanding the time range.", "warning");
+    }
     payload = getAnalysisPayload();
   } catch (error) {
     showError(error.message);
@@ -894,6 +980,7 @@ async function runRelationshipAnalysis() {
 function renderAnalysisSummary(response) {
   const analysis = response?.analysis || null;
   const windowInfo = response?.window || null;
+  const warningBox = document.getElementById("analysis-warning-box");
   document.getElementById("summary-scanned").textContent = analysis?.candidate_count_scanned ?? "-";
   document.getElementById("summary-analyzed").textContent = analysis?.candidate_count_analyzed ?? "-";
   document.getElementById("summary-skipped").textContent = analysis?.skipped_count ?? "-";
@@ -907,7 +994,8 @@ function renderAnalysisSummary(response) {
   } else {
     for (const [reason, count] of skippedItems) {
       const item = document.createElement("li");
-      item.textContent = `${reason}: ${count}`;
+      item.textContent = `${readableSkipReason(reason)}: ${count}`;
+      item.title = reason;
       skippedList.appendChild(item);
     }
   }
@@ -918,7 +1006,12 @@ function renderAnalysisSummary(response) {
   if (!warnings.length) {
     warningList.innerHTML = "<li>-</li>";
   } else {
-    for (const warning of warnings) {
+    const rawTargetCount = analysis?.skipped_by_reason?.target_insufficient_data || 0;
+    const targetDominates = rawTargetCount > 0 && rawTargetCount >= Math.max(1, (analysis?.skipped_count || 0) - 1);
+    const prioritizedWarnings = targetDominates
+      ? warnings.filter((warning) => !warning.includes("candidate scan reached max_candidate_tags"))
+      : warnings;
+    for (const warning of prioritizedWarnings) {
       const item = document.createElement("li");
       item.textContent = warning;
       warningList.appendChild(item);
@@ -936,6 +1029,26 @@ function renderAnalysisSummary(response) {
     const item = document.createElement("li");
     item.textContent = setting;
     settingsList.appendChild(item);
+  }
+
+  const rawTargetCount = analysis?.skipped_by_reason?.target_insufficient_data || 0;
+  const targetDominates = rawTargetCount > 0 && rawTargetCount >= Math.max(1, (analysis?.skipped_count || 0) - 1);
+  if (targetDominates) {
+    warningBox.classList.remove("hidden");
+    warningBox.innerHTML = `
+      <strong>The selected target did not have enough usable numeric data in this time range.</strong>
+      <div>Fix the target first; candidate results were not meaningful.</div>
+      <div>Recommended actions:</div>
+      <ol>
+        <li>Choose a different target tag with more samples.</li>
+        <li>Expand the time range.</li>
+        <li>Lower Min Pair Count.</li>
+        <li>Use scored profiles and select a high/medium continuous_numeric tag.</li>
+      </ol>
+    `;
+  } else {
+    warningBox.classList.add("hidden");
+    warningBox.innerHTML = "";
   }
 }
 

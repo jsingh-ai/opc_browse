@@ -285,6 +285,24 @@ Avoid at first:
 - constant parameters
 - text/state/alarm tags
 
+## Troubleshooting
+
+### Why did analysis return zero results?
+
+Common causes:
+
+- the selected target tag does not have enough usable numeric samples in the chosen time range
+- the target behaves like a constant, sparse signal, or text/state-like tag
+- the time range is too short to produce enough overlapping buckets
+- `min_pair_count` is set too high for the available data
+
+Recommended fixes:
+
+1. Use scored profiles and start with a `high` or `medium` `continuous_numeric` tag.
+2. Expand the time range.
+3. Lower `min_pair_count`.
+4. Avoid constant, sparse, and text-like targets for relationship analysis.
+
 ## Tests
 
 Run the full test suite:
