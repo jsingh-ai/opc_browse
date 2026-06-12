@@ -207,6 +207,25 @@ Examples:
 - failed API requests remain visible in the persistent error area
 - static HTML now includes a dedicated toast container and clearer section wrappers
 
+## Guided Workflow
+
+You do not need to create a dashboard first.
+
+Start in `Explore`:
+
+1. Select a machine.
+2. Pick a target tag.
+3. Run relationship analysis.
+4. Plot the target alone or compare it to related tags.
+5. Optionally save a useful chart or relationship result to a dashboard.
+
+The Explore page now emphasizes this flow directly:
+
+- `1. Choose a machine and target tag`
+- `2. Find related tags`
+- `3. Plot trends`
+- `Optional: Save this view`
+
 ## Phase 9 Tag Profiling And Smarter Discovery
 
 Phase 9 adds heuristic tag usefulness scoring so you can find better targets before running correlations.

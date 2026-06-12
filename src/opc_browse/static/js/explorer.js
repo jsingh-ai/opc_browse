@@ -102,6 +102,41 @@ function createBadge(label, type = "") {
   return `<span class="badge ${type}">${escapeHtml(label)}</span>`;
 }
 
+function getCurrentWorkflowState() {
+  return {
+    machine: Boolean(state.selectedMachineId),
+    target: Boolean(state.targetTag),
+    analysis: Array.isArray(state.analysisResults) && state.analysisResults.length > 0,
+    plot: Boolean(state.lastTimeseriesResponse?.series?.length),
+    save: Boolean((state.currentDashboard?.panels || []).length),
+  };
+}
+
+function updateWorkflowSteps() {
+  const workflowState = getCurrentWorkflowState();
+  const activeStep = !workflowState.machine
+    ? "machine"
+    : !workflowState.target
+      ? "target"
+      : !workflowState.analysis
+        ? "analysis"
+        : !workflowState.plot
+          ? "plot"
+          : "save";
+
+  qsa("[data-workflow-step]").forEach((element) => {
+    const stepName = element.getAttribute("data-workflow-step");
+    element.classList.remove("incomplete", "active", "complete");
+    if (workflowState[stepName]) {
+      element.classList.add("complete");
+    } else if (stepName === activeStep) {
+      element.classList.add("active");
+    } else {
+      element.classList.add("incomplete");
+    }
+  });
+}
+
 function generatePanelId() {
   return `panel_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -463,6 +498,26 @@ function updateActiveMachineLabel() {
   label.className = "status-pill ok";
 }
 
+function updateChartPlaceholder() {
+  const placeholder = document.getElementById("chart-empty-state");
+  if (!placeholder || state.chart) {
+    return;
+  }
+  if (!state.targetTag) {
+    placeholder.textContent = "Click Plot to view the selected target tag.";
+    return;
+  }
+  if (state.selectedResultTagIds.size > 0) {
+    placeholder.textContent = "Click Plot to compare target with selected related tags.";
+    return;
+  }
+  if (state.analysisResults.length > 0) {
+    placeholder.textContent = "Click Plot to view the target tag alone, or select related tags to compare.";
+    return;
+  }
+  placeholder.textContent = "Click Plot to view the selected target tag.";
+}
+
 function folderNameFromTag(tag) {
   if (!tag.opc_path || !tag.opc_path.includes("/")) {
     return tag.parent_branch || "root";
@@ -692,6 +747,8 @@ async function loadTags() {
       }
       renderTagList();
       renderTargetTag();
+      updateChartPlaceholder();
+      updateWorkflowSteps();
       persistWorkspace();
       setGlobalStatus(`Loaded ${state.tags.length} tag(s).`, "success");
     } catch (error) {
@@ -709,13 +766,19 @@ function setTargetTag(tag) {
   state.analysisResults = [];
   state.lastAnalysisResponse = null;
   state.selectedResultTagIds = new Set();
+  state.lastTimeseriesRequest = null;
+  state.lastTimeseriesResponse = null;
   renderTagList();
   renderTargetTag();
   renderAnalysisSummary(null);
   renderRelationshipResults();
   renderSelectedSeriesList();
   clearError();
+  clearChart();
+  showToast(`Target selected: ${tag.display_name || tag.browse_name || tag.opc_path || `Tag ${tag.tag_id}`}`, "success");
   setGlobalStatus(`Target selected: ${tag.display_name || tag.browse_name || tag.opc_path || `Tag ${tag.tag_id}`}.`, "info");
+  updateChartPlaceholder();
+  updateWorkflowSteps();
   persistWorkspace();
 }
 
@@ -723,7 +786,7 @@ function renderTargetTag() {
   const card = document.getElementById("target-card");
   if (!state.targetTag) {
     card.className = "target-card empty-state";
-    card.textContent = "Select a numeric tag to begin.";
+    card.textContent = "Pick a numeric tag from the left to analyze.";
     return;
   }
   card.className = "target-card";
@@ -745,7 +808,10 @@ function renderTargetTag() {
 
 function getAnalysisPayload() {
   if (!state.selectedMachineId || !state.targetTag) {
-    throw new Error("Select a machine and target tag first.");
+    if (!state.selectedMachineId) {
+      throw new Error("Select a machine first.");
+    }
+    throw new Error("Select a target tag first.");
   }
   const startUtc = document.getElementById("start-utc").value.trim();
   const endUtc = document.getElementById("end-utc").value.trim();
@@ -755,7 +821,7 @@ function getAnalysisPayload() {
     throw new Error("Start UTC and End UTC are required.");
   }
   if (new Date(startUtc).getTime() >= new Date(endUtc).getTime()) {
-    throw new Error("Start UTC must be earlier than End UTC.");
+    throw new Error("Start UTC must be before End UTC.");
   }
   if (bucketSeconds < 1) {
     throw new Error("Bucket seconds must be at least 1.");
@@ -807,6 +873,8 @@ async function runRelationshipAnalysis() {
       renderAnalysisSummary(response);
       renderRelationshipResults();
       renderSelectedSeriesList();
+      updateChartPlaceholder();
+      updateWorkflowSteps();
       persistWorkspace();
       showToast("Relationship analysis completed.", "success");
       setGlobalStatus(`Analysis completed with ${state.analysisResults.length} result(s).`, "success");
@@ -815,6 +883,7 @@ async function runRelationshipAnalysis() {
       state.lastAnalysisResponse = null;
       renderAnalysisSummary(null);
       renderRelationshipResults();
+      updateWorkflowSteps();
       showError(`Relationship analysis failed: ${error.message}`);
       setGlobalStatus("Relationship analysis failed.", "danger");
     }
@@ -911,6 +980,7 @@ function toggleResultSelection(tagId) {
   }
   renderRelationshipResults();
   renderSelectedSeriesList();
+  updateChartPlaceholder();
   persistWorkspace();
 }
 
@@ -1090,14 +1160,17 @@ function createChart(canvas, series, chartMode) {
 
 async function plotSelectedSeries() {
   clearError();
+  if (!state.selectedMachineId) {
+    showError("Select a machine first.");
+    return;
+  }
   if (!state.targetTag) {
     showError("Select a target tag before plotting.");
     return;
   }
   const selectedResults = state.analysisResults.filter((result) => state.selectedResultTagIds.has(result.tag_id));
   if (!selectedResults.length) {
-    showError("Select at least one related tag to plot.");
-    return;
+    showToast("Plotting target only. Select related tags after analysis to compare.", "info");
   }
   const requestPayload = buildChartPayload(
     [
@@ -1128,6 +1201,7 @@ async function plotSelectedSeries() {
       state.lastTimeseriesRequest = requestPayload;
       state.lastTimeseriesResponse = response;
       renderChart(response.series || []);
+      updateWorkflowSteps();
       persistWorkspace();
       showToast("Chart plotted.", "success");
       setGlobalStatus(`Chart updated with ${response.series?.length || 0} series.`, "success");
@@ -1156,6 +1230,7 @@ function renderChart(series) {
     chartWarning.textContent = "";
   }
   state.chart = createChart(canvas, series, chartMode);
+  updateChartPlaceholder();
 }
 
 function clearChart() {
@@ -1163,9 +1238,13 @@ function clearChart() {
     state.chart.destroy();
     state.chart = null;
   }
+  state.lastTimeseriesRequest = null;
+  state.lastTimeseriesResponse = null;
   document.getElementById("chart-empty-state").classList.remove("hidden");
   document.getElementById("chart-warning").classList.add("hidden");
   document.getElementById("chart-warning").textContent = "";
+  updateChartPlaceholder();
+  updateWorkflowSteps();
 }
 
 function selectTopResults(limit) {
@@ -1175,6 +1254,7 @@ function selectTopResults(limit) {
   }
   renderRelationshipResults();
   renderSelectedSeriesList();
+  updateChartPlaceholder();
   persistWorkspace();
 }
 
@@ -1182,6 +1262,7 @@ function clearSelectedResults() {
   state.selectedResultTagIds = new Set();
   renderRelationshipResults();
   renderSelectedSeriesList();
+  updateChartPlaceholder();
   persistWorkspace();
 }
 
@@ -1292,6 +1373,7 @@ async function loadDashboardById(dashboardId) {
     renderDashboardGrid();
     markDashboardDirty(false);
     setDashboardStatus("No dashboard selected.");
+    updateWorkflowSteps();
     return;
   }
   try {
@@ -1301,6 +1383,7 @@ async function loadDashboardById(dashboardId) {
     renderDashboardGrid();
     markDashboardDirty(false);
     setDashboardStatus(`Loaded dashboard ${payload.name}.`);
+    updateWorkflowSteps();
   } catch (error) {
     showError(`Failed to load dashboard: ${error.message}`);
   }
@@ -1325,6 +1408,7 @@ async function saveCurrentDashboard() {
       setDashboardStatus(`Saved dashboard ${saved.name}.`);
       showToast("Dashboard saved.", "success");
       setGlobalStatus(`Dashboard ${saved.name} saved.`, "success");
+      updateWorkflowSteps();
     }, "Saving...");
   } catch (error) {
     showError(`Failed to save dashboard: ${error.message}`);
@@ -1350,6 +1434,7 @@ async function deleteCurrentDashboard() {
       setDashboardStatus("Dashboard deleted.");
       showToast("Dashboard deleted.", "warning");
       setGlobalStatus("Dashboard deleted.", "warning");
+      updateWorkflowSteps();
     }
   } catch (error) {
     showError(`Failed to delete dashboard: ${error.message}`);
@@ -1377,6 +1462,7 @@ function addPanelToDashboard(panel) {
   renderDashboardGrid();
   markDashboardDirty(true);
   setGlobalStatus("Dashboard changed. Save to persist panel updates.", "warning");
+  updateWorkflowSteps();
 }
 
 function addCurrentChartPanel() {
@@ -1397,8 +1483,9 @@ function addCurrentChartPanel() {
     series: state.lastTimeseriesRequest.series,
     data: { response: state.lastTimeseriesResponse },
   });
-    setDashboardStatus("Added current chart as a panel. Save the dashboard to persist it.");
-    showToast("Chart panel added to dashboard.", "success");
+  setDashboardStatus("Added current chart as a panel. Save the dashboard to persist it.");
+  showToast("Chart panel added to dashboard.", "success");
+  updateWorkflowSteps();
 }
 
 function addRelationshipResultsPanel() {
@@ -1415,6 +1502,7 @@ function addRelationshipResultsPanel() {
   });
   setDashboardStatus("Added relationship results panel. Save the dashboard to persist it.");
   showToast("Relationship panel added to dashboard.", "success");
+  updateWorkflowSteps();
 }
 
 async function addTargetProfilePanel() {
@@ -1444,6 +1532,7 @@ async function addTargetProfilePanel() {
     });
     setDashboardStatus("Added tag profile panel. Save the dashboard to persist it.");
     showToast("Profile panel added to dashboard.", "success");
+    updateWorkflowSteps();
   } catch (error) {
     showError(`Failed to load tag profile: ${error.message}`);
   }
@@ -1464,6 +1553,7 @@ function removeDashboardPanel(panelId) {
   markDashboardDirty(true);
   setDashboardStatus("Panel removed. Save the dashboard to persist the change.");
   showToast("Panel removed.", "warning");
+  updateWorkflowSteps();
 }
 
 function updatePanelTitle(panelId) {
@@ -1637,6 +1727,7 @@ async function refreshPanel(panelId) {
     markDashboardDirty(true);
     setDashboardStatus(`Refreshed panel ${panel.title}.`);
     showToast(`Panel refreshed: ${panel.title}`, "success");
+    updateWorkflowSteps();
   } catch (error) {
     panel.data.error = error.message;
     renderDashboardGrid();
@@ -1660,6 +1751,7 @@ async function refreshAllPanels() {
     }
     document.getElementById("refresh-all-status").textContent = `Refreshed ${panels.length} panel(s).`;
     showToast(`Refreshed ${panels.length} panel(s).`, "success");
+    updateWorkflowSteps();
   } finally {
     disableButton("refresh-all-panels-btn", false);
   }
@@ -1796,6 +1888,8 @@ function resetWorkspace() {
   applyFilterButtonState("tag-filter-row", state.activeTagFilter, "data-tag-filter");
   applyFilterButtonState("relationship-filter-row", state.activeRelationshipFilter, "data-relationship-filter");
   updateActiveMachineLabel();
+  updateChartPlaceholder();
+  updateWorkflowSteps();
   showToast("Workspace reset.", "info");
   setGlobalStatus("Workspace reset.", "info");
 }
@@ -1832,12 +1926,17 @@ function bindEvents() {
     state.analysisResults = [];
     state.lastAnalysisResponse = null;
     state.selectedResultTagIds = new Set();
+    state.lastTimeseriesRequest = null;
+    state.lastTimeseriesResponse = null;
     renderTargetTag();
     renderAnalysisSummary(null);
     renderRelationshipResults();
     renderSelectedSeriesList();
+    clearChart();
     persistWorkspace();
     updateActiveMachineLabel();
+    updateChartPlaceholder();
+    updateWorkflowSteps();
     await loadTags();
   });
 
@@ -1883,6 +1982,7 @@ function bindEvents() {
   document.getElementById("clear-selected-btn").addEventListener("click", clearSelectedResults);
   document.getElementById("tab-explore").addEventListener("click", () => switchTab("explore"));
   document.getElementById("tab-dashboards").addEventListener("click", () => switchTab("dashboards"));
+  document.getElementById("go-to-dashboards-btn").addEventListener("click", () => switchTab("dashboards"));
   document.getElementById("new-dashboard-btn").addEventListener("click", () => {
     state.currentDashboard = createBlankDashboard();
     syncDashboardInputs();
@@ -1890,6 +1990,7 @@ function bindEvents() {
     markDashboardDirty(false);
     setDashboardStatus("New unsaved dashboard created.");
     document.getElementById("dashboard-select").value = "";
+    updateWorkflowSteps();
   });
   document.getElementById("save-dashboard-btn").addEventListener("click", saveCurrentDashboard);
   document.getElementById("delete-dashboard-btn").addEventListener("click", deleteCurrentDashboard);
@@ -1954,6 +2055,8 @@ async function init() {
   renderRelationshipResults();
   renderSelectedSeriesList();
   updateActiveMachineLabel();
+  updateChartPlaceholder();
+  updateWorkflowSteps();
   await renderDashboardGrid();
   await loadHealth();
   await Promise.all([loadMachines(), loadDashboards()]);

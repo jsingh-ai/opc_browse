@@ -47,7 +47,7 @@ def test_root_route_returns_html():
     assert b"OPC Browse Data Explorer" in body
     assert b"/static/css/explorer.css" in body
     assert b"/static/js/explorer.js" in body
-    assert b"Saved Dashboards" in body
+    assert b"Choose a machine and target tag" in body
     assert b"Use scored profiles" in body
     assert b"toast-container" in body
 
